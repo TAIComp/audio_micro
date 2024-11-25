@@ -7,7 +7,6 @@ from datetime import datetime
 from google.cloud import texttospeech
 import pygame
 from pathlib import Path
-from enum import Enum
 
 # Suppress ALSA warnings
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
@@ -32,16 +31,11 @@ import queue
 import threading
 from google.cloud import speech
 
-class ListeningState(Enum):
-    FULL_LISTENING = "full_listening"
-    INTERRUPT_ONLY = "interrupt_only"
-    NOT_LISTENING = "not_listening"
-
 class AudioTranscriber:
     def __init__(self):
         # Initialize audio parameters
         self.RATE = 16000
-        self.CHUNK = int(self.RATE / 20)  # 50ms chunks instead of 100ms
+        self.CHUNK = int(self.RATE / 10)  # 100ms chunks
         self.current_sentence = ""
         self.last_transcript = ""  # Add this to track interim results
         
@@ -90,45 +84,11 @@ class AudioTranscriber:
         # Initialize pygame mixer for audio playback
         pygame.mixer.init()
 
-        # Add new attributes
-        self.listening_state = ListeningState.FULL_LISTENING
-        self.interrupt_commands = {
-            "stop", "end", "shut up",
-            "please stop", "stop please",
-            "please end", "end please",
-            "shut up please", "please shut up",
-            "stop talking", "stop speaking",
-            "be quiet", "quiet please",
-            "that's enough", "thats enough",
-            "okay stop", "ok stop",
-            "can you stop", "could you stop",
-            "would you stop", "can you be quiet",
-            "silence", "pause"
-        }
-        self.is_speaking = False
-        
-        # Update OpenAI model
-        self.model = "gpt-4o-mini"  
-        
-        # Add transcript tracking
-        self.last_interim_timestamp = time.time()
-        self.interim_cooldown = 0.5  # seconds between interim updates
-        
-        # Add new flag for interrupt handling
-        self.last_interrupt_time = time.time()
-        self.interrupt_cooldown = 1.0  # 1 second cooldown between interrupts
-        
-        # Path to prerecorded interrupt acknowledgment
-        self.interrupt_audio_path = Path("interruption.mp3")
-        
-        if not self.interrupt_audio_path.exists():
-            print(f"Warning: Interrupt audio file '{self.interrupt_audio_path}' not found!")
-
     def check_sentence_completion(self, text):
         """Check if the sentence is complete using OpenAI."""
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": """You are a linguistic expert focused solely on analyzing sentence completion. 
                     Evaluate whether the given sentence is complete by checking for:
@@ -166,7 +126,7 @@ class AudioTranscriber:
         """Get response from OpenAI for the transcribed text."""
         try:
             response = self.openai_client.chat.completions.create(
-                model=self.model,  # Updated model
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": """You are Quad, an AI-powered online teacher dedicated to making learning fun and engaging.
 
@@ -203,7 +163,7 @@ class AudioTranscriber:
         self.last_final_transcript = ""
         self.is_processing = False
         self.last_sentence_complete = False
-        self.last_interim_timestamp = time.time()
+        print("\nListening...")
 
     def text_to_speech(self, text):
         """Convert text to speech and save as MP3."""
@@ -234,26 +194,14 @@ class AudioTranscriber:
             return None
 
     def play_audio_response(self, audio_path):
-        """Play the audio response with improved interrupt capability."""
+        """Play the audio response."""
         try:
-            self.is_speaking = True
-            self.listening_state = ListeningState.INTERRUPT_ONLY
-            
             pygame.mixer.music.load(str(audio_path))
             pygame.mixer.music.play()
-            
-            # Add event handling for better interrupt control
             while pygame.mixer.music.get_busy():
                 pygame.time.Clock().tick(10)
-                if not self.is_speaking:  # Check if interrupted
-                    pygame.mixer.music.stop()
-                    break
-                    
         except Exception as e:
             print(f"Audio playback error: {e}")
-        finally:
-            self.is_speaking = False
-            self.listening_state = ListeningState.FULL_LISTENING
 
     def check_silence(self):
         """Check for silence and process accordingly."""
@@ -345,88 +293,45 @@ class AudioTranscriber:
 
         print("Listening...")
         for response in responses:
-            if not response.results or not response.results[0].alternatives:
+            if not response.results:
                 continue
 
             result = response.results[0]
-            transcript = result.alternatives[0].transcript.lower().strip()
-            
-            # Check for interrupt commands first
-            if any(cmd in transcript for cmd in self.interrupt_commands):
-                current_time = time.time()
-                if current_time - self.last_interrupt_time >= self.interrupt_cooldown:
-                    print("\nInterrupt command detected!")
-                    if self.is_speaking:
-                        pygame.mixer.music.stop()
-                        # Play acknowledgment before resetting state
-                        self.play_acknowledgment()
-                    self.is_speaking = False
-                    self.listening_state = ListeningState.FULL_LISTENING
-                    
-                    self.reset_state()
-                    self.last_interrupt_time = current_time
-                    
-                    # Clear the audio queue
-                    try:
-                        while True:
-                            self.audio_queue.get_nowait()
-                    except queue.Empty:
-                        pass
-                    
-                    print("Ready for new input...")
-                    continue
-                continue  # Skip processing this transcript entirely
-            
-            if self.listening_state == ListeningState.FULL_LISTENING:
-                self.last_speech_time = datetime.now()
-                
-                if not result.is_final:
-                    current_time = time.time()
-                    if (transcript != self.last_transcript and 
-                        current_time - self.last_interim_timestamp >= self.interim_cooldown):
-                        print(f'Interim: "{transcript}"')
-                        self.last_transcript = transcript
-                        self.last_interim_timestamp = current_time
-                else:
-                    if not self.current_sentence:
-                        self.current_sentence = transcript
-                    else:
-                        new_words = [word for word in transcript.split() 
-                                   if word not in self.current_sentence.split() 
-                                   and word not in self.interrupt_commands]
-                        if new_words:
-                            self.current_sentence += " " + " ".join(new_words)
-                    
-                    self.last_final_transcript = self.current_sentence
-                    print(f'Final: "{self.current_sentence}"')
-                    self.last_sentence_complete = self.check_sentence_completion(self.current_sentence)
+            if not result.alternatives:
+                continue
 
-    def play_acknowledgment(self):
-        """Play the prerecorded acknowledgment audio."""
-        try:
-            # Stop any currently playing audio
-            if pygame.mixer.music.get_busy():
-                pygame.mixer.music.stop()
-                pygame.mixer.music.unload()
-            
-            # Verify file exists
-            if not self.interrupt_audio_path.exists():
-                print(f"Error: Interruption audio file not found at {self.interrupt_audio_path}")
-                return
-            
-            # Load and play the interruption audio
-            pygame.mixer.music.load(str(self.interrupt_audio_path))
-            pygame.mixer.music.play()
-            
-            # Wait for the interruption audio to finish
-            while pygame.mixer.music.get_busy():
-                pygame.time.Clock().tick(10)
-            
-            # Cleanup
-            pygame.mixer.music.unload()
-            
-        except Exception as e:
-            print(f"Error playing acknowledgment: {e}")
+            transcript = result.alternatives[0].transcript
+            self.last_speech_time = datetime.now()
+
+            if not result.is_final:
+                # For interim results, always show the complete current transcription
+                if transcript != self.last_transcript:
+                    print(f'Interim: "{transcript}"')
+                    self.last_transcript = transcript
+            else:
+                # For final results, append new content to the current sentence
+                if not self.current_sentence:
+                    self.current_sentence = transcript
+                else:
+                    # Get the new words by comparing with existing sentence
+                    current_words = set(self.current_sentence.split())
+                    new_transcript_words = transcript.split()
+                    
+                    # Find new words that aren't in the current sentence
+                    new_words = []
+                    for word in new_transcript_words:
+                        if word not in current_words:
+                            new_words.append(word)
+                    
+                    # Append new words to the current sentence
+                    if new_words:
+                        self.current_sentence += " " + " ".join(new_words)
+                
+                self.last_final_transcript = self.current_sentence
+                print(f'Final: "{self.current_sentence}"')
+                
+                # Check sentence completion with OpenAI
+                self.last_sentence_complete = self.check_sentence_completion(self.current_sentence)
 
 def main():
     try:
