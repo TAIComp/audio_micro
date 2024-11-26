@@ -8,6 +8,7 @@ from google.cloud import texttospeech
 import pygame
 from pathlib import Path
 from enum import Enum
+import random
 
 # Suppress ALSA warnings
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
@@ -124,42 +125,158 @@ class AudioTranscriber:
         if not self.interrupt_audio_path.exists():
             print(f"Warning: Interrupt audio file '{self.interrupt_audio_path}' not found!")
 
-    def check_sentence_completion(self, text):
-        """Check if the sentence is complete using OpenAI."""
+        # Initialize pygame for event handling
+        pygame.init()
+        # Create a small visible window that stays on top
+        self.screen = pygame.display.set_mode((200, 100))
+        pygame.display.set_caption("Press SPACE to interrupt")
+        # Keep window on top
+        os.environ['SDL_WINDOW_ALWAYS_ON_TOP'] = '1'
+
+        # Add these new initializations
+        self.current_audio_playing = False
+        self.is_processing = False
+        self.is_speaking = False
+        self.pending_response = None
+
+        # Define the mapping of indices to actual filenames (including apostrophes)
+        self.context_file_mapping = {
+            0: "Hmm_let_me_think_about_that",
+            1: "So_basically",
+            2: "Umm_okay_so",
+            3: "Let_me_figure_this_out",
+            4: "Hmm_that's_a_good_one",    # with apostrophe
+            5: "Alright_let's_see",        # with apostrophe
+            6: "Let's_think_about_this_for_a_moment",  # with apostrophe
+            7: "Ooooh_that's_tricky",      # with apostrophe
+            8: "Hmm_give_me_a_sec",
+            9: "So_one_moment_um",
+            10: "Oh_okay_okay",
+            11: "Aha_just_a_sec",
+            12: "Alright_let's_dive_into_that",  # with apostrophe
+            13: "Okay_okay_let's_see",           # with apostrophe
+            14: "Hmm_this_is_interesting",
+            15: "Okay_okay_let's_get_to_work",   # with apostrophe
+            16: "So_yeah",
+            17: "Uhh_well",
+            18: "You_know",
+            19: "So_anyway",
+            20: "Alright_umm",
+            21: "Oh_well_hmm",
+            22: "Well_you_see",
+            23: "So_basically_yeah",
+            24: "Umm_anyway",
+            25: "It's_uh_kinda_like"       # with apostrophe
+        }
+
+        # Display mapping for reference
+        print("\nRequired audio files in contextBased folder:")
+        for idx, filename in self.context_file_mapping.items():
+            print(f"{idx}: {filename}.mp3")
+
+        # Update paths for audio folders with absolute paths
+        self.base_dir = Path(__file__).parent.absolute()
+        self.voice_caching_path = self.base_dir / "voiceCashingSys"
+        self.context_folder = self.voice_caching_path / "contextBased"
+        self.random_folder = self.voice_caching_path / "random"
+        
+        # Initialize the random audio files list
+        self.random_file_names = [
+            "Hmm_let_me_think.mp3",
+            "So.mp3",
+            "Umm_well_well_well.mp3",
+            "You_know.mp3"
+        ]
+        
+        # Verify and load random audio files
+        self.random_audio_files = []
+        for filename in self.random_file_names:
+            file_path = self.random_folder / filename
+            if file_path.exists():
+                self.random_audio_files.append(file_path)
+        
+        self.used_random_files = set()
+
+    def get_context_index(self, text):
+        """Get the most appropriate context index for the given text."""
         try:
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": """You are a linguistic expert focused solely on analyzing sentence completion. 
-                    Evaluate whether the given sentence is complete by checking for:
+                    {"role": "system", "content": """Select the most appropriate filler phrase index based on the context:
 
-                    1. Grammatical completeness (subject + predicate)
-                    2. Semantic completeness (complete thought/meaning)
-                    3. Natural ending point (proper punctuation or logical conclusion)
-                    4. Trailing indicators that suggest more is coming:
-                       - Hanging conjunctions (and, but, or)
-                       - Incomplete phrases
-                       - Missing essential parts of speech
-                       - Unfinished comparative statements
-                       - Interrupted thoughts
-
-                    Return ONLY 'True' if the sentence is complete, or 'False' if it likely has continuation.
-
-                    Examples:
-                    - "My name is John." -> True
-                    - "My name is" -> False
-                    - "I went to the store and" -> False
-                    - "Although it was raining" -> False
-                    - "The weather is nice today" -> True
-                    - "If you want to come with us" -> False
-                    - "Let me think about" -> False"""},
-                    {"role": "user", "content": f"Analyze this sentence for completion: '{text}'"}
+                    Neutral Fillers:
+                    0: "Hmm, let me think about that..."
+                    1: "So, basically"
+                    2: "Umm, okay so..."
+                    3: "Let me figure this out..."
+                    4: "Hmm, that's a good one..."
+                    5: "Alright, let's see..."
+                    6: "Let's think about this for a moment..."
+                    
+                    Casual and Friendly:
+                    7: "Ooooh, that's tricky..."
+                    8: "Hmm, give me a sec..."
+                    9: "So, one moment... um"
+                    10: "Oh, okay, okay..."
+                    11: "Aha, just a sec..."
+                    12: "Alright, let's dive into that!"
+                    
+                    Slightly Playful:
+                    13: "Okay okay, let's see..."
+                    14: "Hmm, this is interesting..."
+                    15: "Okay okay, let's get to work..."
+                    
+                    Natural Fillers:
+                    16: "So, yeah..."
+                    17: "Uhh, well..."
+                    18: "You know..."
+                    19: "So, anyway..."
+                    20: "Alright, umm..."
+                    21: "Oh, well, hmm..."
+                    
+                    Casual Transitions:
+                    22: "Well, you see..."
+                    23: "So, basically, yeah..."
+                    24: "Umm, anyway..."
+                    25: "It's, uh, kinda like..."
+                    
+                    Return only the numeric index (0-25) that best matches the context."""},
+                    {"role": "user", "content": f"Select the most appropriate index for this text: '{text}'"}
                 ]
             )
-
-            return response.choices[0].message.content.strip().lower() == 'true'
+            
+            # Extract just the number from the response
+            index = int(''.join(filter(str.isdigit, response.choices[0].message.content)))
+            return max(0, min(25, index))  # Ensure index is between 0 and 25
+            
         except Exception as e:
-            print(f"OpenAI API error: {e}")
+            print(f"Error getting context index: {e}")
+            return 0  # Default to neutral filler
+
+    def check_sentence_completion(self, text):
+        """Check if the sentence is complete."""
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": """Evaluate if this sentence is complete by checking for:
+                    - Grammatical completeness (subject + predicate)
+                    - Semantic completeness (complete thought/meaning)
+                    - Natural ending point (proper punctuation or logical conclusion)
+                    - Trailing indicators suggesting more is coming
+                    
+                    Return only True or False."""},
+                    {"role": "user", "content": f"Is this sentence complete: '{text}'"}
+                ]
+            )
+            
+            # Convert response to boolean
+            is_complete = 'true' in response.choices[0].message.content.lower()
+            return is_complete
+            
+        except Exception as e:
+            print(f"Error checking sentence completion: {e}")
             return False
 
     def get_ai_response(self, text):
@@ -316,6 +433,41 @@ class AudioTranscriber:
         self.audio_queue.put(in_data)
         return None, pyaudio.paContinue
 
+    def check_keyboard_events(self):
+        """Check for keyboard events."""
+        for event in pygame.event.get():
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    print("\nSpace key interrupt detected!")
+                    self.handle_keyboard_interrupt()
+                    return True
+            elif event.type == pygame.QUIT:
+                return False
+        return True
+
+    def handle_keyboard_interrupt(self):
+        """Handle keyboard interruption."""
+        current_time = time.time()
+        if current_time - self.last_interrupt_time >= self.interrupt_cooldown:
+            print("\nKeyboard interrupt detected!")
+            if self.is_speaking:
+                pygame.mixer.music.stop()
+                self.play_acknowledgment()
+            self.is_speaking = False
+            self.listening_state = ListeningState.FULL_LISTENING
+            
+            self.reset_state()
+            self.last_interrupt_time = current_time
+            
+            # Clear the audio queue
+            try:
+                while True:
+                    self.audio_queue.get_nowait()
+            except queue.Empty:
+                pass
+            
+            print("Ready for new input...")
+
     def process_audio_stream(self):
         stream, audio = self.get_audio_input()
         
@@ -330,7 +482,30 @@ class AudioTranscriber:
                 requests
             )
 
-            self.handle_responses(responses)
+            # Start the silence checking thread
+            silence_thread = threading.Thread(target=self.check_silence, daemon=True)
+            silence_thread.start()
+
+            print("Listening... (Press SPACE to interrupt)")
+            
+            # Create a separate thread for keyboard event checking
+            def check_events():
+                while True:
+                    if not self.check_keyboard_events():
+                        break
+                    time.sleep(0.1)  # Small delay to prevent high CPU usage
+            
+            # Start keyboard event checking thread
+            keyboard_thread = threading.Thread(target=check_events, daemon=True)
+            keyboard_thread.start()
+
+            # Process responses
+            try:
+                for response in responses:
+                    if response.results:
+                        self.handle_responses([response])
+            except StopIteration:
+                pass
         
         except Exception as e:
             print(f"Error occurred: {e}")
@@ -338,48 +513,25 @@ class AudioTranscriber:
             stream.stop_stream()
             stream.close()
             audio.terminate()
+            pygame.quit()
 
     def handle_responses(self, responses):
-        silence_thread = threading.Thread(target=self.check_silence, daemon=True)
-        silence_thread.start()
-
-        print("Listening...")
+        """Handle streaming responses with separate context and completion checks."""
         for response in responses:
-            if not response.results or not response.results[0].alternatives:
+            if not response.results:
                 continue
 
             result = response.results[0]
             transcript = result.alternatives[0].transcript.lower().strip()
             
-            # Check for interrupt commands first
+            # Skip interrupt commands check
             if any(cmd in transcript for cmd in self.interrupt_commands):
-                current_time = time.time()
-                if current_time - self.last_interrupt_time >= self.interrupt_cooldown:
-                    print("\nInterrupt command detected!")
-                    if self.is_speaking:
-                        pygame.mixer.music.stop()
-                        # Play acknowledgment before resetting state
-                        self.play_acknowledgment()
-                    self.is_speaking = False
-                    self.listening_state = ListeningState.FULL_LISTENING
-                    
-                    self.reset_state()
-                    self.last_interrupt_time = current_time
-                    
-                    # Clear the audio queue
-                    try:
-                        while True:
-                            self.audio_queue.get_nowait()
-                    except queue.Empty:
-                        pass
-                    
-                    print("Ready for new input...")
-                    continue
-                continue  # Skip processing this transcript entirely
-            
+                continue
+
             if self.listening_state == ListeningState.FULL_LISTENING:
                 self.last_speech_time = datetime.now()
                 
+                # Handle interim results
                 if not result.is_final:
                     current_time = time.time()
                     if (transcript != self.last_transcript and 
@@ -387,6 +539,8 @@ class AudioTranscriber:
                         print(f'Interim: "{transcript}"')
                         self.last_transcript = transcript
                         self.last_interim_timestamp = current_time
+                
+                # Handle final results
                 else:
                     if not self.current_sentence:
                         self.current_sentence = transcript
@@ -398,8 +552,110 @@ class AudioTranscriber:
                             self.current_sentence += " " + " ".join(new_words)
                     
                     self.last_final_transcript = self.current_sentence
-                    print(f'Final: "{self.current_sentence}"')
-                    self.last_sentence_complete = self.check_sentence_completion(self.current_sentence)
+                    
+                    # Get context index first
+                    audio_index = self.get_context_index(self.current_sentence)
+                    # Then check completion
+                    is_complete = self.check_sentence_completion(self.current_sentence)
+                    self.last_sentence_complete = is_complete
+                    
+                    print(f'Final: "{self.current_sentence}" (Complete: {is_complete}, Audio Index: {audio_index})')
+                    
+                    if not self.is_processing:
+                        self.is_processing = True
+                        processing_thread = threading.Thread(
+                            target=self.process_complete_sentence,
+                            args=(self.current_sentence, audio_index),
+                            daemon=True
+                        )
+                        processing_thread.start()
+
+    def process_complete_sentence(self, sentence, initial_audio_index):
+        """Process complete sentence and manage audio sequence."""
+        try:
+            # Start a thread for AI response generation immediately
+            response_thread = threading.Thread(
+                target=self.generate_response,
+                args=(sentence,),
+                daemon=True
+            )
+            response_thread.start()
+            
+            # Play initial context/random audio while waiting for response
+            if not self.play_context_audio(initial_audio_index):
+                self.play_next_random_audio()
+            
+            # Wait for response generation to complete
+            response_thread.join()
+            
+            # Once we have the response, wait for current audio to finish
+            while self.current_audio_playing:
+                time.sleep(0.1)
+            
+            # Play one more random/context audio before the AI response
+            print("Before audio of response from ai:", end=" ")
+            if not self.play_context_audio(random.randint(0, len(self.context_file_mapping)-1)):
+                self.play_next_random_audio()
+            
+            # Wait for the pre-response audio to finish
+            while self.current_audio_playing:
+                time.sleep(0.1)
+            
+            # Finally play the AI response
+            if hasattr(self, 'pending_response') and self.pending_response:
+                audio_path = self.text_to_speech(self.pending_response)
+                if audio_path:
+                    print(f"Playing audio response from: {audio_path}")
+                    self.play_audio_response(audio_path)
+                
+            self.reset_state()
+            
+        except Exception as e:
+            print(f"Error processing sentence: {e}")
+        finally:
+            self.is_processing = False
+
+    def generate_response(self, sentence):
+        """Generate AI response in a separate thread."""
+        try:
+            print("\nGenerating response...")
+            response = self.get_ai_response(sentence)
+            if response:
+                print(f"\nAI Response: {response}")
+                self.pending_response = response
+        except Exception as e:
+            print(f"Error generating response: {e}")
+            self.pending_response = None
+
+    def play_context_audio(self, index):
+        """Play context-specific audio with improved feedback."""
+        try:
+            if self.is_speaking or self.current_audio_playing:
+                return False
+                
+            if index in self.context_file_mapping:
+                filename = f"{self.context_file_mapping[index]}.mp3"
+                context_file = self.context_folder / filename
+                
+                if context_file.exists():
+                    print(f"Playing context audio: {context_file.name}")
+                    pygame.mixer.music.load(str(context_file))
+                    pygame.mixer.music.play()
+                    self.current_audio_playing = True
+                    
+                    def monitor_audio():
+                        while pygame.mixer.music.get_busy():
+                            time.sleep(0.1)
+                        self.current_audio_playing = False
+                    
+                    threading.Thread(target=monitor_audio, daemon=True).start()
+                    return True
+                
+            return False
+                
+        except Exception as e:
+            print(f"Error playing context audio: {e}")
+            return False
 
     def play_acknowledgment(self):
         """Play the prerecorded acknowledgment audio."""
@@ -428,10 +684,46 @@ class AudioTranscriber:
         except Exception as e:
             print(f"Error playing acknowledgment: {e}")
 
+    def play_next_random_audio(self):
+        """Play the next random audio file."""
+        try:
+            if not self.random_audio_files:
+                return False
+            
+            # Reset used files if we've played them all
+            if len(self.used_random_files) == len(self.random_audio_files):
+                self.used_random_files.clear()
+            
+            # Select an unused random file
+            available_files = [f for f in self.random_audio_files if f not in self.used_random_files]
+            if not available_files:
+                return False
+            
+            audio_file = random.choice(available_files)
+            self.used_random_files.add(audio_file)
+            
+            pygame.mixer.music.load(str(audio_file))
+            pygame.mixer.music.play()
+            self.current_audio_playing = True
+            print(f"Playing random audio: {audio_file.name}")
+            return True
+            
+        except Exception as e:
+            print(f"Error playing random audio: {e}")
+            return False
+
+    def chain_random_audio(self):
+        """Chain multiple random audio files while waiting for response."""
+        while self.is_processing and not self.is_speaking:
+            if not self.current_audio_playing:
+                if not self.play_next_random_audio():
+                    time.sleep(0.5)  # Wait before trying again if no audio available
+
 def main():
     try:
         transcriber = AudioTranscriber()
         print("Starting audio transcription... Speak into your microphone.")
+        print("Press SPACE to interrupt at any time.")
         transcriber.process_audio_stream()
     except KeyboardInterrupt:
         print("\nTranscription stopped by user")
@@ -440,3 +732,22 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

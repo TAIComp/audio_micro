@@ -124,6 +124,14 @@ class AudioTranscriber:
         if not self.interrupt_audio_path.exists():
             print(f"Warning: Interrupt audio file '{self.interrupt_audio_path}' not found!")
 
+        # Initialize pygame for event handling
+        pygame.init()
+        # Create a small visible window that stays on top
+        self.screen = pygame.display.set_mode((200, 100))
+        pygame.display.set_caption("Press SPACE to interrupt")
+        # Keep window on top
+        os.environ['SDL_WINDOW_ALWAYS_ON_TOP'] = '1'
+
     def check_sentence_completion(self, text):
         """Check if the sentence is complete using OpenAI."""
         try:
@@ -316,6 +324,41 @@ class AudioTranscriber:
         self.audio_queue.put(in_data)
         return None, pyaudio.paContinue
 
+    def check_keyboard_events(self):
+        """Check for keyboard events."""
+        for event in pygame.event.get():
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    print("\nSpace key interrupt detected!")
+                    self.handle_keyboard_interrupt()
+                    return True
+            elif event.type == pygame.QUIT:
+                return False
+        return True
+
+    def handle_keyboard_interrupt(self):
+        """Handle keyboard interruption."""
+        current_time = time.time()
+        if current_time - self.last_interrupt_time >= self.interrupt_cooldown:
+            print("\nKeyboard interrupt detected!")
+            if self.is_speaking:
+                pygame.mixer.music.stop()
+                self.play_acknowledgment()
+            self.is_speaking = False
+            self.listening_state = ListeningState.FULL_LISTENING
+            
+            self.reset_state()
+            self.last_interrupt_time = current_time
+            
+            # Clear the audio queue
+            try:
+                while True:
+                    self.audio_queue.get_nowait()
+            except queue.Empty:
+                pass
+            
+            print("Ready for new input...")
+
     def process_audio_stream(self):
         stream, audio = self.get_audio_input()
         
@@ -330,7 +373,29 @@ class AudioTranscriber:
                 requests
             )
 
-            self.handle_responses(responses)
+            # Start the silence checking thread
+            silence_thread = threading.Thread(target=self.check_silence, daemon=True)
+            silence_thread.start()
+
+            print("\nListening... (Press SPACE to interrupt)")
+            
+            # Create a separate thread for keyboard event checking
+            def check_events():
+                while True:
+                    if not self.check_keyboard_events():
+                        break
+                    time.sleep(0.1)
+            
+            keyboard_thread = threading.Thread(target=check_events, daemon=True)
+            keyboard_thread.start()
+
+            # Process responses
+            try:
+                for response in responses:
+                    if response.results:
+                        self.handle_responses([response])
+            except StopIteration:
+                pass
         
         except Exception as e:
             print(f"Error occurred: {e}")
@@ -338,12 +403,12 @@ class AudioTranscriber:
             stream.stop_stream()
             stream.close()
             audio.terminate()
+            pygame.quit()
 
     def handle_responses(self, responses):
         silence_thread = threading.Thread(target=self.check_silence, daemon=True)
         silence_thread.start()
 
-        print("Listening...")
         for response in responses:
             if not response.results or not response.results[0].alternatives:
                 continue
@@ -432,6 +497,7 @@ def main():
     try:
         transcriber = AudioTranscriber()
         print("Starting audio transcription... Speak into your microphone.")
+        print("Press SPACE to interrupt at any time.")
         transcriber.process_audio_stream()
     except KeyboardInterrupt:
         print("\nTranscription stopped by user")
