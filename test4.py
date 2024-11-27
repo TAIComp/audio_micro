@@ -9,7 +9,6 @@ import pygame
 from pathlib import Path
 from enum import Enum
 import random
-import numpy
 
 # Suppress ALSA warnings
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
@@ -33,6 +32,8 @@ import pyaudio
 import queue
 import threading
 from google.cloud import speech
+
+file = __file__  # Current file path
 
 class ListeningState(Enum):
     FULL_LISTENING = "full_listening"
@@ -92,7 +93,7 @@ class AudioTranscriber:
         # Initialize pygame mixer for audio playback
         pygame.mixer.init()
 
-        # Add new attributes
+    # Add new attributes
         self.listening_state = ListeningState.FULL_LISTENING
         self.interrupt_commands = {
             "stop", "end", "shut up",
@@ -175,8 +176,8 @@ class AudioTranscriber:
         for idx, filename in self.context_file_mapping.items():
             print(f"{idx}: {filename}.mp3")
 
-        # Update paths for audio folders with absolute paths
-        self.base_dir = Path(__file__).parent.absolute()
+# Update paths for audio folders with absolute paths
+        self.base_dir = Path(file).parent.absolute()
         self.voice_caching_path = self.base_dir / "voiceCashingSys"
         self.context_folder = self.voice_caching_path / "contextBased"
         self.random_folder = self.voice_caching_path / "random"
@@ -198,10 +199,6 @@ class AudioTranscriber:
         
         self.used_random_files = set()
 
-        # Add new audio monitoring parameters
-        self.MONITOR_VOLUME = 0.5  # Adjust this value between 0.0 and 1.0
-        self.NOISE_THRESHOLD = 300  # Adjust this value to filter background noise
-
     def get_context_and_completion(self, text):
         """Get both context index and completion status in a single API call."""
         try:
@@ -209,7 +206,15 @@ class AudioTranscriber:
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": """Analyze the given text and provide TWO pieces of information:
-                    1. The most appropriate filler phrase index (0-25) based on this context:
+                      1. Whether the sentence is complete, considering:
+                    - Grammatical completeness (subject + predicate)
+                    - Semantic completeness (complete thought/meaning)
+                    - Natural ending point (proper punctuation or logical conclusion)
+                    - Trailing indicators suggesting more is coming
+                     
+                    You are an AI assistant that determines whether a sentence is complete or not. A sentence is considered complete if it ends with a period (.) or question mark (?) If there is period or question mark, return true. If there is no dot or question mark, return false.
+                     
+                    2. The most appropriate filler phrase index (0-25) based on this context. Analyze the text that is provided for you and predict the best phrase that would an actual human being choose to say before there response while they are thinking. 
                     
                     Neutral Fillers:
                     0: "Hmm, let me think about that..."
@@ -247,25 +252,28 @@ class AudioTranscriber:
                     24: "Umm, anyway..."
                     25: "It's, uh, kinda like..."
 
-                    2. Whether the sentence is complete, considering:
-                    - Grammatical completeness (subject + predicate)
-                    - Semantic completeness (complete thought/meaning)
-                    - Natural ending point (proper punctuation or logical conclusion)
-                    - Trailing indicators suggesting more is coming
-
-                    Return ONLY in this format:
+Return ONLY in this exact format (no other text):
                     {"index": X, "complete": true/false}"""},
                     {"role": "user", "content": f"Analyze this text: '{text}'"}
-                ]
+                ],
+                temperature=0.1,      # Controls randomness (0 = deterministic, 1 = creative)
+                max_tokens=5,         # Maximum length of response
+                top_p=0.1,           # Controls diversity of responses
+                frequency_penalty=0.0, # Reduces repetition of similar words
+                presence_penalty=0.0   # Adjusts likelihood of new topics
             )
             
             # Safer parsing of the response
-            response_text = response.choices[0].message.content
-            # Replace 'true' and 'false' with 'True' and 'False' for Python
-            response_text = response_text.replace('true', 'True').replace('false', 'False')
-            result = eval(response_text)
-            return result["index"], result["complete"]
-            
+            import json
+            response_text = response.choices[0].message.content.strip()
+            try:
+                result = json.loads(response_text)
+                return result["index"], result["complete"]
+            except json.JSONDecodeError:
+                # Fallback: Check if text ends with period or question mark
+                has_ending = text.strip().endswith(('.', '?'))
+                return 0, has_ending
+                
         except Exception as e:
             print(f"Error analyzing text: {e}")
             return 0, False  # Default values
@@ -288,12 +296,49 @@ class AudioTranscriber:
                     7. Encouragement: Use positive reinforcement
                     8. Verification: End with a quick comprehension check when appropriate
 
-                    Response Format:
+Response Format:
                     - Start with a direct answer
                     - Follow with a brief explanation if needed
                     - Include an example or analogy when relevant
                     - Keep total response length moderate
                     - Use natural, conversational language
+                     
+                     Your response should be like you are having a conversation having things like umm so, you know, i mean like, and... , etc.
+                     Also your response should be structured so that if before that we put one of these phrases, the transition would be smooth:  Neutral Fillers:
+                    0: "Hmm, let me think about that..."
+                    1: "So, basically"
+                    2: "Umm, okay so..."
+                    3: "Let me figure this out..."
+                    4: "Hmm, that's a good one..."
+                    5: "Alright, let's see..."
+                    6: "Let's think about this for a moment..."
+                    
+                    Casual and Friendly:
+                    7: "Ooooh, that's tricky..."
+                    8: "Hmm, give me a sec..."
+                    9: "So, one moment... um"
+                    10: "Oh, okay, okay..."
+                    11: "Aha, just a sec..."
+                    12: "Alright, let's dive into that!"
+                    
+                    Slightly Playful:
+                    13: "Okay okay, let's see..."
+                    14: "Hmm, this is interesting..."
+                    15: "Okay okay, let's get to work..."
+                    
+                    Natural Fillers:
+                    16: "So, yeah..."
+                    17: "Uhh, well..."
+                    18: "You know..."
+                    19: "So, anyway..."
+                    20: "Alright, umm..."
+                    21: "Oh, well, hmm..."
+                    
+                    Casual Transitions:
+                    22: "Well, you see..."
+                    23: "So, basically, yeah..."
+                    24: "Umm, anyway..."
+                    25: "It's, uh, kinda like..."
 
                     Remember: You're speaking responses will be converted to speech, so keep sentences clear and well-paced."""},
                     {"role": "user", "content": text}
@@ -341,9 +386,16 @@ class AudioTranscriber:
             print(f"Text-to-Speech error: {e}")
             return None
 
-    def play_audio_response(self, audio_path):
+    def play_audio_response(self):
         """Play the audio response with improved interrupt capability."""
         try:
+            # Get the path to the latest response audio file
+            audio_path = Path("ai_responses") / "latest_response.mp3"
+            
+            if not audio_path.exists():
+                print(f"Error: Audio file not found at {audio_path}")
+                return
+            
             self.is_speaking = True
             self.listening_state = ListeningState.INTERRUPT_ONLY
             
@@ -430,56 +482,19 @@ class AudioTranscriber:
 
     def get_audio_input(self):
         audio = pyaudio.PyAudio()
-        
-        # Setup input stream with monitoring enabled
         stream = audio.open(
             format=pyaudio.paInt16,
             channels=1,
             rate=self.RATE,
             input=True,
-            output=True,  # Enable output for monitoring
             frames_per_buffer=self.CHUNK,
-            stream_callback=self._monitor_and_fill_queue
+            stream_callback=self._fill_queue
         )
         return stream, audio
 
-    def _monitor_and_fill_queue(self, in_data, frame_count, time_info, status_flags):
-        """Modified callback with volume control and noise filtering."""
-        try:
-            # Convert audio data to numpy array for processing
-            audio_data = numpy.frombuffer(in_data, dtype=numpy.int16)
-            
-            # Simple noise gate
-            audio_data = numpy.where(
-                numpy.abs(audio_data) < self.NOISE_THRESHOLD,
-                0,
-                audio_data
-            )
-            
-            # Apply volume adjustment
-            monitored_audio = (audio_data * self.MONITOR_VOLUME).astype(numpy.int16)
-            
-            # When not playing responses, monitor audio AND fill queue
-            if not (self.current_audio_playing or self.is_speaking):
-                self.audio_queue.put(in_data)  # Original audio for recognition
-                return monitored_audio.tobytes(), pyaudio.paContinue
-            else:
-                self.audio_queue.put(in_data)
-                return None, pyaudio.paContinue
-                
-        except Exception as e:
-            print(f"Audio monitoring error: {e}")
-            return None, pyaudio.paContinue
-
-    def adjust_monitor_volume(self, volume):
-        """Adjust the monitoring volume (0.0 to 1.0)"""
-        self.MONITOR_VOLUME = max(0.0, min(1.0, volume))
-        print(f"Monitor volume set to: {self.MONITOR_VOLUME}")
-
-    def adjust_noise_threshold(self, threshold):
-        """Adjust the noise gate threshold"""
-        self.NOISE_THRESHOLD = max(0, threshold)
-        print(f"Noise threshold set to: {self.NOISE_THRESHOLD}")
+    def _fill_queue(self, in_data, frame_count, time_info, status_flags):
+        self.audio_queue.put(in_data)
+        return None, pyaudio.paContinue
 
     def check_keyboard_events(self):
         """Check for keyboard events."""
@@ -517,64 +532,51 @@ class AudioTranscriber:
             print("Ready for new input...")
 
     def process_audio_stream(self):
-        while True:  # Add outer loop for reconnection
+        stream, audio = self.get_audio_input()
+        
+        try:
+            requests = (
+                speech.StreamingRecognizeRequest(audio_content=content)
+                for content in self.audio_input_stream()
+            )
+
+            responses = self.client.streaming_recognize(
+                self.streaming_config,
+                requests
+            )
+
+            # Start the silence checking thread
+            silence_thread = threading.Thread(target=self.check_silence, daemon=True)
+            silence_thread.start()
+
+            print("Listening... (Press SPACE to interrupt)")
+            
+            # Create a separate thread for keyboard event checking
+            def check_events():
+                while True:
+                    if not self.check_keyboard_events():
+                        break
+                    time.sleep(0.1)  # Small delay to prevent high CPU usage
+            
+            # Start keyboard event checking thread
+            keyboard_thread = threading.Thread(target=check_events, daemon=True)
+            keyboard_thread.start()
+
+            # Process responses
             try:
-                stream, audio = self.get_audio_input()
-                
-                requests = (
-                    speech.StreamingRecognizeRequest(audio_content=content)
-                    for content in self.audio_input_stream()
-                )
-
-                responses = self.client.streaming_recognize(
-                    self.streaming_config,
-                    requests
-                )
-
-                # Start the silence checking thread
-                silence_thread = threading.Thread(target=self.check_silence, daemon=True)
-                silence_thread.start()
-
-                print("Listening... (Press SPACE to interrupt)")
-                
-                # Create a separate thread for keyboard event checking
-                def check_events():
-                    while True:
-                        if not self.check_keyboard_events():
-                            break
-                        time.sleep(0.1)
-                
-                keyboard_thread = threading.Thread(target=check_events, daemon=True)
-                keyboard_thread.start()
-
-                # Process responses
                 for response in responses:
                     if response.results:
                         self.handle_responses([response])
-                    
-            except Exception as e:
-                print(f"\nError occurred: {e}")
-                # Clean up current stream
-                if 'stream' in locals():
-                    stream.stop_stream()
-                    stream.close()
-                if 'audio' in locals():
-                    audio.terminate()
-                
-                print("\nReconnecting audio stream...")
-                time.sleep(1)  # Wait a bit before reconnecting
-                continue  # Restart the loop
-                
-            except KeyboardInterrupt:
-                break
-                
-        # Final cleanup
-        if 'stream' in locals():
+            except StopIteration:
+                pass
+        
+        except Exception as e:
+            print(f"Error occurred: {e}")
+        finally:
             stream.stop_stream()
             stream.close()
-        if 'audio' in locals():
             audio.terminate()
-        pygame.quit()
+            pygame.quit()
 
     def handle_responses(self, responses):
         """Handle streaming responses with combined context and completion checks."""
@@ -811,22 +813,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

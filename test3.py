@@ -9,6 +9,10 @@ import pygame
 from pathlib import Path
 from enum import Enum
 import random
+import sounddevice as sd
+from pynput import keyboard
+import difflib
+import numpy as np
 
 # Suppress ALSA warnings
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
@@ -125,13 +129,24 @@ class AudioTranscriber:
         if not self.interrupt_audio_path.exists():
             print(f"Warning: Interrupt audio file '{self.interrupt_audio_path}' not found!")
 
-        # Initialize pygame for event handling
-        pygame.init()
-        # Create a small visible window that stays on top
-        self.screen = pygame.display.set_mode((200, 100))
-        pygame.display.set_caption("Press SPACE to interrupt")
-        # Keep window on top
-        os.environ['SDL_WINDOW_ALWAYS_ON_TOP'] = '1'
+        # Add this before keyboard listener initialization
+        def on_press(key):
+            try:
+                if hasattr(key, 'char') and key.char == '`':
+                    print("\nBacktick key interrupt detected!")
+                    self.handle_keyboard_interrupt()
+            except Exception as e:
+                print(f"Keyboard handling error: {e}")
+
+        # Initialize keyboard listener with the local on_press function
+        self.keyboard_listener = keyboard.Listener(on_press=on_press)
+        self.keyboard_listener.start()
+
+        # Initialize monitor stream as None
+        self.monitor_stream = None
+
+        # Initialize mic monitoring
+        self.setup_mic_monitoring()
 
         # Add these new initializations
         self.current_audio_playing = False
@@ -196,6 +211,66 @@ class AudioTranscriber:
                 self.random_audio_files.append(file_path)
         
         self.used_random_files = set()
+
+        # Add mic monitoring settings
+        self.monitor_stream = None
+        self.monitoring_active = True
+        self.MONITOR_CHANNELS = 1
+        self.MONITOR_DTYPE = 'float32'
+        
+        # Initialize mic monitoring
+        self.setup_mic_monitoring()
+
+        # Add new audio monitoring settings
+        self.mic_volume = 0.5  # Default mic monitoring volume (0.0 to 1.0)
+        self.noise_gate_threshold = 0.05  # Adjust this value to control noise reduction
+
+    def setup_mic_monitoring(self):
+        """Setup real-time mic monitoring with volume control and noise gate."""
+        try:
+            def audio_callback(indata, outdata, frames, time, status):
+                if status:
+                    print(f'Monitoring status: {status}')
+                if self.monitoring_active and not self.is_speaking and not self.current_audio_playing:
+                    # Convert to float32 if not already
+                    audio_data = indata.astype(np.float32)
+                    
+                    # Apply noise gate
+                    mask = np.abs(audio_data) < self.noise_gate_threshold
+                    audio_data[mask] = 0
+                    
+                    # Apply volume control
+                    audio_data = audio_data * self.mic_volume
+                    
+                    # Ensure we don't exceed [-1, 1] range
+                    audio_data = np.clip(audio_data, -1.0, 1.0)
+                    
+                    outdata[:] = audio_data
+                else:
+                    outdata.fill(0)
+
+            self.monitor_stream = sd.Stream(
+                channels=self.MONITOR_CHANNELS,
+                dtype=self.MONITOR_DTYPE,
+                samplerate=self.RATE,
+                callback=audio_callback,
+                blocksize=self.CHUNK
+            )
+            self.monitor_stream.start()
+            
+        except Exception as e:
+            print(f"Error setting up mic monitoring: {e}")
+            self.monitor_stream = None
+
+    def set_mic_volume(self, volume):
+        """Set the microphone monitoring volume (0.0 to 1.0)."""
+        self.mic_volume = max(0.0, min(1.0, volume))
+        print(f"Mic monitoring volume set to: {self.mic_volume:.2f}")
+
+    def set_noise_gate(self, threshold):
+        """Set the noise gate threshold (0.0 to 1.0)."""
+        self.noise_gate_threshold = max(0.0, min(1.0, threshold))
+        print(f"Noise gate threshold set to: {self.noise_gate_threshold:.3f}")
 
     def get_context_and_completion(self, text):
         """Get both context index and completion status in a single API call."""
@@ -337,15 +412,18 @@ class AudioTranscriber:
             return None
 
     def play_audio_response(self, audio_path):
-        """Play the audio response with improved interrupt capability."""
+        """Modified to handle mic monitoring during playback."""
         try:
             self.is_speaking = True
             self.listening_state = ListeningState.INTERRUPT_ONLY
+            self.current_audio_playing = True
+            
+            # Temporarily disable mic monitoring during playback
+            self.monitoring_active = False
             
             pygame.mixer.music.load(str(audio_path))
             pygame.mixer.music.play()
             
-            # Add event handling for better interrupt control
             while pygame.mixer.music.get_busy():
                 pygame.time.Clock().tick(10)
                 if not self.is_speaking:  # Check if interrupted
@@ -355,8 +433,33 @@ class AudioTranscriber:
         except Exception as e:
             print(f"Audio playback error: {e}")
         finally:
+            # Set the last speaking timestamp
+            self._last_speaking_time = time.time()
+            
+            # Re-enable mic monitoring after playback
+            self.monitoring_active = True
+            
+            # Reset all necessary states after audio finishes
             self.is_speaking = False
             self.listening_state = ListeningState.FULL_LISTENING
+            self.current_audio_playing = False
+            self.is_processing = False
+            self.pending_response = None
+            
+            # Clear any remaining audio in the queue
+            try:
+                while True:
+                    self.audio_queue.get_nowait()
+            except queue.Empty:
+                pass
+            
+            # Reset transcription-related variables
+            self.current_sentence = ""
+            self.last_transcript = ""
+            self.last_final_transcript = ""
+            self.last_sentence_complete = False
+            
+            print("\nListening... (Press ` to interrupt)")
 
     def check_silence(self):
         """Check for silence and process accordingly."""
@@ -367,15 +470,28 @@ class AudioTranscriber:
 
             current_time = datetime.now()
             silence_duration = (current_time - self.last_speech_time).total_seconds()
-
+            
             if self.last_final_transcript and not self.is_processing:
-                if (self.last_sentence_complete and silence_duration >= 1) or \
-                   (not self.last_sentence_complete and silence_duration >= 2):
+                # Get completion status for the current sentence
+                _, is_complete = self.get_context_and_completion(self.last_final_transcript)
+                
+                # Condition 1: Complete sentence with 1 second silence
+                # Condition 2: Any sentence with 5 seconds silence
+                if (is_complete and silence_duration >= 1.0):
                     self.is_processing = True
-                    print("\nProcessing complete sentence...")
-                    # Get context index for the sentence
+                    print("\nProcessing: Sentence complete and 1 second silence passed")
                     audio_index, _ = self.get_context_and_completion(self.last_final_transcript)
-                    # Start processing thread
+                    processing_thread = threading.Thread(
+                        target=self.process_complete_sentence,
+                        args=(self.last_final_transcript, audio_index),
+                        daemon=True
+                    )
+                    processing_thread.start()
+                    self.reset_state()
+                elif (not is_complete and silence_duration >= 4.0):
+                    self.is_processing = True
+                    print("\nProcessing: Incomplete sentence but 5 seconds silence passed")
+                    audio_index, _ = self.get_context_and_completion(self.last_final_transcript)
                     processing_thread = threading.Thread(
                         target=self.process_complete_sentence,
                         args=(self.last_final_transcript, audio_index),
@@ -407,29 +523,29 @@ class AudioTranscriber:
         self.audio_queue.put(in_data)
         return None, pyaudio.paContinue
 
-    def check_keyboard_events(self):
-        """Check for keyboard events."""
-        for event in pygame.event.get():
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_SPACE:
-                    print("\nSpace key interrupt detected!")
-                    self.handle_keyboard_interrupt()
-                    return True
-            elif event.type == pygame.QUIT:
-                return False
-        return True
-
     def handle_keyboard_interrupt(self):
         """Handle keyboard interruption."""
         current_time = time.time()
         if current_time - self.last_interrupt_time >= self.interrupt_cooldown:
-            print("\nKeyboard interrupt detected!")
-            if self.is_speaking:
-                pygame.mixer.music.stop()
-                self.play_acknowledgment()
-            self.is_speaking = False
-            self.listening_state = ListeningState.FULL_LISTENING
+            print("\nBacktick interrupt detected!")
             
+            # Stop any currently playing audio
+            if pygame.mixer.music.get_busy():
+                pygame.mixer.music.stop()
+                pygame.mixer.music.unload()
+            
+            # Reset all flags and states
+            self.is_speaking = False
+            self.current_audio_playing = False
+            self.listening_state = ListeningState.FULL_LISTENING
+            self.is_processing = False
+            self.pending_response = None
+            
+            # Clear the ready_audio_path if it exists
+            if hasattr(self, 'ready_audio_path'):
+                delattr(self, 'ready_audio_path')
+            
+            self.play_acknowledgment()
             self.reset_state()
             self.last_interrupt_time = current_time
             
@@ -460,18 +576,7 @@ class AudioTranscriber:
             silence_thread = threading.Thread(target=self.check_silence, daemon=True)
             silence_thread.start()
 
-            print("Listening... (Press SPACE to interrupt)")
-            
-            # Create a separate thread for keyboard event checking
-            def check_events():
-                while True:
-                    if not self.check_keyboard_events():
-                        break
-                    time.sleep(0.1)  # Small delay to prevent high CPU usage
-            
-            # Start keyboard event checking thread
-            keyboard_thread = threading.Thread(target=check_events, daemon=True)
-            keyboard_thread.start()
+            print("Listening... (Press ` to interrupt)")
 
             # Process responses
             try:
@@ -487,7 +592,8 @@ class AudioTranscriber:
             stream.stop_stream()
             stream.close()
             audio.terminate()
-            pygame.quit()
+            pygame.mixer.quit()
+            self.keyboard_listener.stop()
 
     def handle_responses(self, responses):
         """Handle streaming responses with combined context and completion checks."""
@@ -498,16 +604,22 @@ class AudioTranscriber:
             result = response.results[0]
             transcript = result.alternatives[0].transcript.lower().strip()
             
-            # Check if we're currently playing any audio
+            # Skip processing if we're speaking or playing audio
             if self.current_audio_playing or self.is_speaking:
-                # Only process interrupt commands when audio is playing
-                if any(cmd in transcript for cmd in self.interrupt_commands):
-                    print("\nInterrupt command detected!")
-                    self.handle_keyboard_interrupt()
-                continue  # Skip all other processing while audio is playing
+                continue
+            
+            # Add a cooldown period after speaking finishes
+            if hasattr(self, '_last_speaking_time'):
+                cooldown_period = 1.0  # 1 second cooldown
+                if time.time() - self._last_speaking_time < cooldown_period:
+                    continue
             
             # Only process speech when we're in FULL_LISTENING state
             if self.listening_state == ListeningState.FULL_LISTENING:
+                # Ignore empty transcripts
+                if not transcript.strip():
+                    continue
+                
                 self.last_speech_time = datetime.now()
                 
                 # Handle interim results
@@ -537,8 +649,13 @@ class AudioTranscriber:
                     
                     print(f'Final: "{self.current_sentence}" (Complete: {is_complete}, Audio Index: {audio_index})')
                     
-                    if not self.is_processing:
+                    # Only process immediately if the sentence is complete and 1 second has passed
+                    current_time = datetime.now()
+                    silence_duration = (current_time - self.last_speech_time).total_seconds()
+                    
+                    if is_complete and silence_duration >= 1.0 and not self.is_processing:
                         self.is_processing = True
+                        print("\nProcessing: Sentence complete and 1 second silence passed")
                         processing_thread = threading.Thread(
                             target=self.process_complete_sentence,
                             args=(self.current_sentence, audio_index),
@@ -550,14 +667,15 @@ class AudioTranscriber:
         try:
             # 1. Start AI response generation and conversion in a thread
             def generate_and_convert():
-                # Generate response
-                response = self.get_ai_response(sentence)
-                if response:
-                    # Convert to audio
-                    audio_path = self.text_to_speech(response)
-                    if audio_path:
-                        self.ready_audio_path = audio_path
-                        
+                # Only generate response if we're still processing
+                if self.is_processing:
+                    response = self.get_ai_response(sentence)
+                    if response and self.is_processing:  # Check again before storing
+                        self.pending_response = response
+                        audio_path = self.text_to_speech(response)
+                        if audio_path and self.is_processing:  # Check again before storing
+                            self.ready_audio_path = audio_path
+            
             response_thread = threading.Thread(
                 target=generate_and_convert,
                 daemon=True
@@ -566,26 +684,35 @@ class AudioTranscriber:
             
             # 2. Play initial context audio and wait for it to finish
             self.play_context_audio(initial_audio_index)
-            while self.current_audio_playing:
+            while self.current_audio_playing and self.is_processing:
                 time.sleep(0.1)
                 
+            # Exit if interrupted
+            if not self.is_processing:
+                return
+            
             # 3. Keep playing random audios until audio is ready to play
-            while not hasattr(self, 'ready_audio_path'):
+            while not hasattr(self, 'ready_audio_path') and self.is_processing:
                 if not self.current_audio_playing:
                     self.play_next_random_audio()
-                # Always wait for current audio to finish
-                while self.current_audio_playing:
+                # Wait for current audio to finish or interruption
+                while self.current_audio_playing and self.is_processing:
                     time.sleep(0.1)
                     
+            # Exit if interrupted
+            if not self.is_processing:
+                return
+            
             # 4. Once audio is ready and current audio is finished, play AI response
-            if hasattr(self, 'ready_audio_path'):
+            if hasattr(self, 'ready_audio_path') and self.is_processing:
                 self.play_audio_response(self.ready_audio_path)
-                delattr(self, 'ready_audio_path')  # Clean up
+                delattr(self, 'ready_audio_path')
                 
         except Exception as e:
             print(f"Error processing sentence: {e}")
         finally:
             self.is_processing = False
+            self.pending_response = None
 
     def generate_response(self, sentence):
         """Generate AI response in a separate thread."""
@@ -611,16 +738,21 @@ class AudioTranscriber:
                 
                 if context_file.exists():
                     print(f"Playing context audio: {context_file.name}")
+                    self.current_audio_playing = True
+                    self.is_speaking = True
+                    self.listening_state = ListeningState.INTERRUPT_ONLY
+                    self.monitoring_active = False  # Disable monitoring while speaking
+                    
                     pygame.mixer.music.load(str(context_file))
                     pygame.mixer.music.play()
-                    self.current_audio_playing = True
-                    self.listening_state = ListeningState.INTERRUPT_ONLY
                     
                     def monitor_audio():
-                        while pygame.mixer.music.get_busy():
+                        while pygame.mixer.music.get_busy() and self.is_speaking:
                             time.sleep(0.1)
                         self.current_audio_playing = False
+                        self.is_speaking = False
                         self.listening_state = ListeningState.FULL_LISTENING
+                        self.monitoring_active = True  # Re-enable monitoring after speaking
                     
                     threading.Thread(target=monitor_audio, daemon=True).start()
                     return True
@@ -679,12 +811,14 @@ class AudioTranscriber:
             pygame.mixer.music.load(str(audio_file))
             pygame.mixer.music.play()
             self.current_audio_playing = True
+            self.is_speaking = True
             self.listening_state = ListeningState.INTERRUPT_ONLY
             
             def monitor_audio():
-                while pygame.mixer.music.get_busy():
+                while pygame.mixer.music.get_busy() and self.is_speaking:
                     time.sleep(0.1)
                 self.current_audio_playing = False
+                self.is_speaking = False
                 self.listening_state = ListeningState.FULL_LISTENING
             
             threading.Thread(target=monitor_audio, daemon=True).start()
@@ -702,11 +836,22 @@ class AudioTranscriber:
                 if not self.play_next_random_audio():
                     time.sleep(0.5)  # Wait before trying again if no audio available
 
+    def __del__(self):
+        """Cleanup resources."""
+        try:
+            if hasattr(self, 'monitor_stream') and self.monitor_stream is not None:
+                self.monitor_stream.stop()
+                self.monitor_stream.close()
+            if hasattr(self, 'keyboard_listener'):
+                self.keyboard_listener.stop()
+        except Exception as e:
+            print(f"Cleanup error: {e}")
+
 def main():
     try:
         transcriber = AudioTranscriber()
         print("Starting audio transcription... Speak into your microphone.")
-        print("Press SPACE to interrupt at any time.")
+        print("Press ` (backtick) to interrupt at any time.")
         transcriber.process_audio_stream()
     except KeyboardInterrupt:
         print("\nTranscription stopped by user")
