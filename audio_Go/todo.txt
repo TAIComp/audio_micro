@@ -1,0 +1,7 @@
+Starts in FULL_LISTENING
+Switches to INTERRUPT_ONLY during processing
+Uses resetState() to properly return to FULL_LISTENING:
+On errors
+After audio completion
+When interrupted
+If no response

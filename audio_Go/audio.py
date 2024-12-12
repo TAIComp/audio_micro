@@ -41,7 +41,6 @@ from google.cloud import speech
 class ListeningState(Enum):
     FULL_LISTENING = "full_listening"
     INTERRUPT_ONLY = "interrupt_only"
-    NOT_LISTENING = "not_listening"
 
 class AudioTranscriber:
     def __init__(self):
