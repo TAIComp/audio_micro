@@ -31,14 +31,22 @@ import (
 	"google.golang.org/api/option"
 )
 
-// ListeningState represents the state of audio listening
+// Add this at the package level, before the constants
 type ListeningState int32
 
+// Then the constants
 const (
 	FULL_LISTENING ListeningState = iota
 	INTERRUPT_ONLY
 	interruptKeyChar = '`'
+	StateTransitionTimeout = 3 * time.Second
 )
+
+type StateTransition struct {
+	from      ListeningState
+	to        ListeningState
+	timestamp time.Time
+}
 
 // AudioTranscriber handles audio transcription and response
 type AudioTranscriber struct {
@@ -48,6 +56,8 @@ type AudioTranscriber struct {
 	CurrentSentence string
 	LastTranscript  string
 	InterruptTranscript string // New field for interrupt detection
+	InterimResult   string   // New field for interim result
+	FinalResult     string   // New field for final result
 	// Thread-safe queue for audio data
 	audioQueue chan []byte
 
@@ -74,7 +84,8 @@ type AudioTranscriber struct {
 	interruptCommands map[string]struct{}
 
 	// Flags
-	isSpeaking bool
+	audioPlaying bool
+	audioPlayingMutex sync.Mutex
 
 	// Transcript tracking
 	lastInterimTimestamp time.Time
@@ -114,7 +125,6 @@ type AudioTranscriber struct {
 
 	// Audio state management
 	isProcessingAudio bool
-	isSpeakingMutex   sync.Mutex
 	audioStateMutex   sync.Mutex
 
 	// Channel for coordinating audio playback
@@ -139,6 +149,27 @@ type AudioTranscriber struct {
 
 	// Add a reference to the cancellation function
 	cancelFunc context.CancelFunc
+
+	// Add these fields to the struct
+	stateTransitions chan StateTransition
+	
+	debug struct {
+		sync.Mutex
+		events []struct {
+			timestamp time.Time
+			event     string
+		}
+	}
+
+	cleanup struct {
+		sync.Once
+		done chan struct{}
+	}
+
+	// Add these fields to AudioTranscriber struct
+	pendingTranscript    string
+	lastTranscriptTime   time.Time
+	transcriptTimeout    time.Duration
 }
 
 // NewAudioTranscriber initializes the AudioTranscriber
@@ -224,7 +255,6 @@ func NewAudioTranscriber() *AudioTranscriber {
 			"silence":          {},
 			"pause":            {},
 		},
-		isSpeaking:           false,
 		lastInterimTimestamp: time.Now(),
 		interimCooldown:      500 * time.Millisecond,
 		lastInterruptTime:    time.Now(),
@@ -284,6 +314,16 @@ func NewAudioTranscriber() *AudioTranscriber {
 			cooldownPeriod:  time.Second,
 		},
 		cancelFunc: transcriberCancel,
+		cleanup: struct {
+			sync.Once
+			done chan struct{}
+		}{
+			done: make(chan struct{}),
+		},
+		stateTransitions: make(chan StateTransition, 100),
+		transcriptTimeout: 2 * time.Second,
+		pendingTranscript: "",
+		lastTranscriptTime: time.Now(),
 	}
 
 	// Define audio folders
@@ -370,11 +410,18 @@ Casual Transitions:
 24: "Umm, anyway..."
 25: "It's, uh, kinda like..."
 
-2. Whether the sentence is complete, considering:
-- Grammatical completeness (subject + predicate)
-- Semantic completeness (complete thought/meaning)
-- Natural ending point (proper punctuation or logical conclusion)
-- Trailing indicators suggesting more is coming
+2. Determine if the input is complete (true/false):
+ALWAYS mark as complete (true) if ANY of these are present:
+- Contains "?" (e.g., "How are you?", "What's up?")
+- Ends with "." (e.g., "That's great.", "I understand.")
+- Ends with "!" (e.g., "Hello!", "Great!")
+- Is a greeting (e.g., "Hi", "Hello", "Hey")
+
+Mark as incomplete (false) ONLY if ALL of these are true:
+- Does NOT end with "?", ".", or "!"
+- Ends with comma or no punctuation
+- Is an unfinished thought
+
 
 Return ONLY in this format:
 {"index": X, "complete": true/false}`,
@@ -520,19 +567,44 @@ func (at *AudioTranscriber) textToSpeech(text string) ([]byte, error) {
 
 // processAudioStream manages the streaming recognition process
 func (at *AudioTranscriber) processAudioStream(ctx context.Context) error {
-	stream, err := at.speechClient.StreamingRecognize(ctx)
-	if err != nil {
-		return fmt.Errorf("could not create stream: %v", err)
-	}
-	defer stream.CloseSend()
+	var currentStream speechpb.Speech_StreamingRecognizeClient
+	var streamMutex sync.Mutex
+	var err error
 
-	// Send the initial configuration
-	if err := stream.Send(&speechpb.StreamingRecognizeRequest{
-		StreamingRequest: &speechpb.StreamingRecognizeRequest_StreamingConfig{
-			StreamingConfig: at.streamConfig,
-		},
-	}); err != nil {
-		return fmt.Errorf("could not send config: %v", err)
+	// Function to create a new stream
+	createNewStream := func() error {
+		streamMutex.Lock()
+		defer streamMutex.Unlock()
+
+		// Only close the current stream if it exists
+		if currentStream != nil {
+			if err := currentStream.CloseSend(); err != nil {
+				log.Printf("Error closing stream: %v", err)
+			}
+			// Wait a bit for cleanup
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		currentStream, err = at.speechClient.StreamingRecognize(ctx)
+		if err != nil {
+			return fmt.Errorf("could not create stream: %v", err)
+		}
+
+		// Send the initial configuration
+		if err := currentStream.Send(&speechpb.StreamingRecognizeRequest{
+			StreamingRequest: &speechpb.StreamingRecognizeRequest_StreamingConfig{
+				StreamingConfig: at.streamConfig,
+			},
+		}); err != nil {
+			return fmt.Errorf("could not send config: %v", err)
+		}
+
+		return nil
+	}
+
+	// Create initial stream
+	if err := createNewStream(); err != nil {
+		return err
 	}
 
 	// Create error channel for error handling
@@ -551,14 +623,26 @@ func (at *AudioTranscriber) processAudioStream(ctx context.Context) error {
 					return
 				}
 
+				streamMutex.Lock()
+				stream := currentStream
+				streamMutex.Unlock()
+
+				if stream == nil {
+					continue
+				}
+
 				// Always send audio data regardless of state
 				if err := stream.Send(&speechpb.StreamingRecognizeRequest{
 					StreamingRequest: &speechpb.StreamingRecognizeRequest_AudioContent{
 						AudioContent: data,
 					},
 				}); err != nil {
-					errChan <- err
-					return
+					log.Printf("Error sending audio data: %v", err)
+					// Try to recreate stream on error
+					if err := createNewStream(); err != nil {
+						errChan <- err
+						return
+					}
 				}
 			}
 		}
@@ -567,27 +651,77 @@ func (at *AudioTranscriber) processAudioStream(ctx context.Context) error {
 	// Start goroutine for receiving responses
 	go func() {
 		for {
+			streamMutex.Lock()
+			stream := currentStream
+			streamMutex.Unlock()
+
+			if stream == nil {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+
 			resp, err := stream.Recv()
-			if err == io.EOF || ctx.Err() != nil {
+			if err == io.EOF {
+				// Try to recreate stream on EOF
+				if err := createNewStream(); err != nil {
+					errChan <- err
+					return
+				}
+				continue
+			}
+			if ctx.Err() != nil {
 				errChan <- nil
 				return
 			}
 			if err != nil {
-				errChan <- err
-				return
+				log.Printf("Error receiving from stream: %v", err)
+				// Try to recreate stream on error
+				if err := createNewStream(); err != nil {
+					errChan <- err
+					return
+				}
+				continue
 			}
 
 			// Get current state before processing
 			currentState := at.getListeningState()
-			fmt.Printf("\rCurrent State: %v, Speaking: %v\n", currentState, at.isSpeaking)
+			audioPlaying := at.isAudioPlaying()  
+			fmt.Printf("\rCurrent State: %v, Audio Playing: %v\n", currentState, audioPlaying)
 
 			// Process responses based on the current state
-			if currentState == FULL_LISTENING && !at.isSpeaking{
-				fmt.Println("Processing in FULL_LISTENING mode")
-				at.processResponseFullListening([]*speechpb.StreamingRecognizeResponse{resp})
-			} else if currentState == INTERRUPT_ONLY && at.isSpeaking {
-				fmt.Println("Processing in INTERRUPT_ONLY mode")
-				at.processResponseInterruptOnly([]*speechpb.StreamingRecognizeResponse{resp})
+			at.processResponses([]*speechpb.StreamingRecognizeResponse{resp})
+		}
+	}()
+
+	// Start goroutine to monitor state changes
+	go func() {
+		var lastState ListeningState
+		var lastAudioPlaying bool
+		var lastStateChange time.Time = time.Now()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				currentState := at.getListeningState()
+				audioPlaying := at.isAudioPlaying()
+
+				// Only create new stream if state has changed and enough time has passed
+				if (currentState != lastState || audioPlaying != lastAudioPlaying) &&
+					time.Since(lastStateChange) >= 500*time.Millisecond {
+					// State has changed, create new stream
+					if err := createNewStream(); err != nil {
+						errChan <- err
+						return
+					}
+
+					lastState = currentState
+					lastAudioPlaying = audioPlaying
+					lastStateChange = time.Now()
+				}
+
+				time.Sleep(200 * time.Millisecond)
 			}
 		}
 	}()
@@ -595,11 +729,67 @@ func (at *AudioTranscriber) processAudioStream(ctx context.Context) error {
 	return <-errChan
 }
 
+// processResponses processes incoming audio responses based on current state
+func (at *AudioTranscriber) processResponses(responses []*speechpb.StreamingRecognizeResponse) {
+    if len(responses) == 0 {
+        return
+    }
+
+    // Get current state and audio status before processing any responses
+    at.mu.Lock()
+    currentState := at.getListeningState()
+    isPlaying := at.isAudioPlaying()
+    at.mu.Unlock()
+
+    // Debug output
+    fmt.Printf("Processing responses - State: %d, Audio Playing: %v\n", currentState, isPlaying)
+
+    for _, response := range responses {
+        if response.Results == nil || len(response.Results) == 0 {
+            continue
+        }
+
+        result := response.Results[0]
+        transcript := strings.TrimSpace(result.Alternatives[0].Transcript)
+        if transcript == "" {
+            continue
+        }
+
+        // Re-check state for each result as it might have changed
+        at.mu.Lock()
+        currentState = at.getListeningState()
+        isPlaying = at.isAudioPlaying()
+        at.mu.Unlock()
+
+        switch currentState {
+        case INTERRUPT_ONLY:
+            if isPlaying && result.IsFinal {  // Only check final results for interrupts
+                at.InterruptTranscript = transcript
+                fmt.Printf("Interrupt Detection: %s\n", transcript)
+                if at.containsInterruptCommand(transcript) {
+                    at.handleVoiceInterrupt()
+                }
+            }
+
+        case FULL_LISTENING:
+            if !isPlaying {
+                if result.IsFinal {
+                    fmt.Printf("Full Listening - Final: %s\n", transcript)
+                    at.handleFinalResult(transcript)
+                } else {
+                    fmt.Printf("Full Listening - Interim: %s\n", transcript)
+                    at.handleInterimResult(transcript)
+                }
+            }
+        }
+    }
+}
+
 // Play audio response
+
 func (at *AudioTranscriber) playAudioResponse(audioPath string) {
-	// Set speaking state
-	at.setSpeakingState(true)
-	at.setListeningState(INTERRUPT_ONLY)
+	// Set audio playing state
+	at.setAudioPlaying(true)
 
 	// Open the audio file
 	f, err := os.Open(audioPath)
@@ -632,75 +822,6 @@ func (at *AudioTranscriber) playAudioResponse(audioPath string) {
 
 	// Wait for playback to finish
 	<-done
-
-	// Reset states immediately after playback
-	at.setSpeakingState(false)
-	at.setListeningState(FULL_LISTENING)
-	at.pendingResponse = "" // Clear the pending response
-	at.resetState()         // Reset all states
-	fmt.Println("\nListening .... (press ` or say \"shut up\" to interrupt)")
-}
-
-// processResponseFullListening processes responses in full listening mode
-func (at *AudioTranscriber) processResponseFullListening(responses []*speechpb.StreamingRecognizeResponse) {
-	// Skip if not in FULL_LISTENING mode
-	if at.getListeningState() != FULL_LISTENING {
-		return
-	}
-
-	for _, resp := range responses {
-		for _, result := range resp.Results {
-			if len(result.Alternatives) == 0 {
-				continue
-			}
-
-			transcript := result.Alternatives[0].Transcript
-
-			// Still check for interrupts even in full listening mode
-			if at.containsInterruptCommand(transcript) {
-				at.handleVoiceInterrupt()
-				return
-			}
-
-			// Process based on result type
-			if !result.IsFinal {
-				at.handleInterimResult(transcript)
-			} else {
-				at.handleFinalResult(transcript)
-			}
-		}
-	}
-}
-
-// processResponseInterruptOnly processes responses in interrupt only mode
-func (at *AudioTranscriber) processResponseInterruptOnly(responses []*speechpb.StreamingRecognizeResponse) {
-	// Skip if not in INTERRUPT_ONLY mode
-	if at.getListeningState() != INTERRUPT_ONLY {
-		return
-	}
-
-	// Clear any existing transcripts immediately
-	at.mu.Lock()
-	at.LastTranscript = ""
-	at.CurrentSentence = ""
-	at.mu.Unlock()
-
-	for _, resp := range responses {
-		for _, result := range resp.Results {
-			if len(result.Alternatives) == 0 {
-				continue
-			}
-
-			transcript := result.Alternatives[0].Transcript
-			
-			// Only check for interrupt commands in INTERRUPT_ONLY mode
-			if at.containsInterruptCommand(transcript) {
-				log.Printf("Interrupt command detected: %s", transcript)
-				at.handleVoiceInterrupt()
-				return
-			}
-		}
-	}
 }
 
 // handleKeyboardInterrupt handles the backtick key interrupt
@@ -709,63 +830,62 @@ func (at *AudioTranscriber) handleKeyboardInterrupt() {
 	at.handleInterrupt()
 }
 
-// handleInterrupt handles interrupt logic
+// handleInterrupt handles interrupt logic with cooldown
 func (at *AudioTranscriber) handleInterrupt() {
-	at.processingLock.Lock()
-	defer at.processingLock.Unlock()
+	// Check cooldown period
+	if time.Since(at.lastInterruptTime) < 3*time.Second {
+		return
+	}
 
-	// Stop any ongoing audio playback
+	// Update last interrupt time
+	at.lastInterruptTime = time.Now()
+
+	// Stop any playing audio
 	at.stopAudio()
-
-	// Reset audio state
-	at.audioState.Lock()
-	at.audioState.lastProcessedText = ""
-	at.audioState.isProcessing = false
-	at.audioState.feedbackBuffer = make([]string, 0, 10)
-	at.audioState.Unlock()
 
 	// Clear the audio queue
 	at.clearAudioQueue()
 
-	// Cancel existing stream if any
-	if at.cancelFunc != nil {
-		at.cancelFunc()
-	}
-
-	// Create new context and cancel function
-	ctx, cancel := context.WithCancel(context.Background())
-	at.cancelFunc = cancel
-
-	// Play acknowledgment sound if available
-	if _, err := os.Stat(at.interruptAudioPath); err == nil {
-		at.playAcknowledgment()
-	}
-
-	// Reset transcription state
+	// Reset state variables
 	at.resetState()
 
-	// Start new audio processing
-	go at.processAudioStream(ctx)
+	// Reset audio state
+	at.audioStateMutex.Lock()
+	at.isProcessingAudio = false
+	at.audioStateMutex.Unlock()
+	at.setAudioPlaying(false)
 
-	// Add a small delay to ensure clean state
-	time.Sleep(200 * time.Millisecond)
+	// Play acknowledgment audio
+	at.playAcknowledgment()
+
+	// Set listening state back to full listening
+	at.setListeningState(FULL_LISTENING)
+
+	// Ensure audio stream is restarted
+	if at.audioStream != nil {
+		at.audioStream.Stop()
+		at.audioStream.Start()
+	}
+
+	// Print listening message
+	fmt.Println("\nListening .... (press ` or say \"shut up\" to interrupt)")
 }
 
 // playAcknowledgment plays the interruption acknowledgment audio
 func (at *AudioTranscriber) playAcknowledgment() {
-    // Set speaking state before playing
-    at.setSpeakingState(true)
+    // Set state before playing
     at.setListeningState(INTERRUPT_ONLY)
-
+    at.setAudioPlaying(true)
+    
     // Play the acknowledgment audio
     at.playAudioResponse(at.interruptAudioPath)
 }
 
 // playNextRandomAudio plays the next random audio file
 func (at *AudioTranscriber) playNextRandomAudio() bool {
-    // Set speaking state before playing
-    at.setSpeakingState(true)
+    // Set state before playing
     at.setListeningState(INTERRUPT_ONLY)
+    at.setAudioPlaying(true)
 
     // Get a random audio file that hasn't been used
     for _, name := range at.randomFileNames {
@@ -797,6 +917,8 @@ func (at *AudioTranscriber) resetState() {
 	at.lastInterimTimestamp = time.Now()
 	at.lastInterruptTime = time.Now() // Reset interrupt timer too
 	at.InterruptTranscript = ""
+	at.InterimResult = ""
+	at.FinalResult = ""
 
 	// Reset audio state
 	at.audioState.Lock()
@@ -812,143 +934,72 @@ func (at *AudioTranscriber) resetState() {
 
 // processCompleteSentence handles the processing of a complete sentence
 func (at *AudioTranscriber) processCompleteSentence(sentence string, initialAudioIndex int) {
-	at.mu.Lock()
-	at.stopGeneration = false
-	at.setListeningState(INTERRUPT_ONLY) // Set state to INTERRUPT_ONLY before streaming
-	at.mu.Unlock()
-
-	// Generate AI response
-	response := at.getAIResponse(sentence)
-	if response == "" {
-		return
-	}
-
-	// Print what AI wants to say
-	fmt.Printf("\nAI wants to say: %s\n\n", response)
-
-	// Store the response for filtering
-	at.pendingResponse = response
-
-	// Play context audio if not interrupted
-	if !at.stopGeneration {
-		contextFile := at.contextFileMapping[initialAudioIndex]
-		fmt.Printf("Playing context audio: %s.mp3\n", contextFile)
-		at.playContextAudio(initialAudioIndex)
-	}
-
-	// Convert and stream AI response if not interrupted
-	if response != "" && !at.stopGeneration {
-		fmt.Println("Streaming AI response audio...")
-		audioData, err := at.textToSpeech(response)
-		if err != nil {
-			log.Printf("Error converting text to speech: %v", err)
-			return
-		}
-
-		// Clear audio queue before streaming
-		at.clearAudioQueue()
-
-		if err := at.streamAudioResponse(audioData); err != nil {
-			log.Printf("Error streaming audio: %v", err)
-			return
-		}
-	}
-
-	// Transition back to FULL_LISTENING state after streaming is complete
-	at.mu.Lock()
-	at.setListeningState(FULL_LISTENING)
-	at.mu.Unlock()
-	fmt.Println("\nListening .... (press ` or say \"shut up\" to interrupt)")
-}
-
-// clearAudioQueue clears any pending audio data in the queue
-func (at *AudioTranscriber) clearAudioQueue() {
-	for len(at.audioQueue) > 0 {
-		<-at.audioQueue
-	}
-}
-
-// Play context audio
-func (at *AudioTranscriber) playContextAudio(index int) bool {
-	// Set speaking state before playing
-	at.setSpeakingState(true)
-	at.setListeningState(INTERRUPT_ONLY)
-
-	// Get the audio file path
-	audioFile := fmt.Sprintf("%s/%d.mp3", at.contextFolder, index)
-	if _, err := os.Stat(audioFile); os.IsNotExist(err) {
-		log.Printf("Context audio file not found: %s", audioFile)
-		at.setSpeakingState(false)
-		at.setListeningState(FULL_LISTENING)
-		return false
-	}
-
-	// Play the audio
-	at.playAudioResponse(audioFile)
-	return true
+    log.Printf("Processing sentence: %s", sentence)
+    
+    // Set initial state
+    at.setListeningState(INTERRUPT_ONLY)
+    at.setAudioPlaying(true)
+    
+    // Play context audio
+    if initialAudioIndex >= 0 {
+        at.playContextAudio(initialAudioIndex)
+    }
+    
+    // Generate and play AI response
+    aiResponse := at.getAIResponse(sentence)
+    if aiResponse != "" {
+        audioData, err := at.textToSpeech(aiResponse)
+        if err == nil {
+            at.streamAudioResponse(audioData)
+        }
+    }
+    
+    // Reset state after completion
+    at.setAudioPlaying(false)
+    at.setListeningState(FULL_LISTENING)
+    at.resetState()
+    
+    fmt.Println("\nListening .... (press ` or say \"shut up\" to interrupt)")
 }
 
 // streamAudioResponse streams the audio response and resets state
 func (at *AudioTranscriber) streamAudioResponse(audioData []byte) error {
-	// Set speaking state before any audio processing
-	at.setSpeakingState(true)
-	at.setListeningState(INTERRUPT_ONLY)
-
-	// Clear any existing transcripts and state
-	at.mu.Lock()
-	at.CurrentSentence = ""
-	at.LastTranscript = ""
-	at.lastInterimTimestamp = time.Now()
-	at.pendingResponse = ""
-	at.audioState.Lock()
-	at.audioState.lastProcessedText = ""
-	at.audioState.isProcessing = false
-	at.audioState.feedbackBuffer = make([]string, 0, 10)
-	at.audioState.Unlock()
-	at.mu.Unlock()
-
-	// Create a new reader for the MP3 data
-	reader := bytes.NewReader(audioData)
-
-	// Decode the MP3
-	streamer, format, err := mp3.Decode(io.NopCloser(reader))
-	if err != nil {
-		at.setSpeakingState(false)
-		at.setListeningState(FULL_LISTENING)
-		return fmt.Errorf("error decoding MP3: %v", err)
-	}
-	defer streamer.Close()
-
-	// Initialize speaker if needed
-	speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
-
-	// Create done channel
-	done := make(chan bool)
-
-	// Play the audio
-	speaker.Play(beep.Seq(streamer, beep.Callback(func() {
-		done <- true
-	})))
-
-	// Wait for playback to finish
-	<-done
-
-	// Add a small delay after playback
-	time.Sleep(300 * time.Millisecond)
-
-	// Reset states after playback
-	at.setSpeakingState(false)
-	at.setListeningState(FULL_LISTENING)
-
-	// Clear all transcripts again to ensure clean state
-	at.mu.Lock()
-	at.CurrentSentence = ""
-	at.LastTranscript = ""
-	at.lastInterimTimestamp = time.Now()
-	at.pendingResponse = ""
-	at.mu.Unlock()
-
-	return nil
+    defer func() {
+        at.setAudioPlaying(false)
+        at.setListeningState(FULL_LISTENING)
+    }()
+    
+    log.Printf("Streaming audio response (length: %d bytes)", len(audioData))
+    
+    reader := bytes.NewReader(audioData)
+    streamer, format, err := mp3.Decode(io.NopCloser(reader))
+    if err != nil {
+        return fmt.Errorf("failed to decode audio: %v", err)
+    }
+    defer streamer.Close()
+    
+    // Reinitialize speaker with the correct format
+    err = speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+    if err != nil {
+        return fmt.Errorf("failed to initialize speaker: %v", err)
+    }
+    
+    // Create done channel
+    done := make(chan bool)
+    
+    // Play audio
+    speaker.Play(beep.Seq(streamer, beep.Callback(func() {
+        done <- true
+    })))
+    
+    // Wait for completion with timeout
+    select {
+    case <-done:
+        log.Println("AI response playback complete")
+        return nil
+    case <-time.After(30 * time.Second):
+        return fmt.Errorf("audio playback timed out")
+    }
 }
 
 // StartProcessing starts the audio processing with the given context
@@ -977,98 +1028,65 @@ func (at *AudioTranscriber) StartProcessing(ctx context.Context) {
 
 // Add these methods to AudioTranscriber struct
 func (at *AudioTranscriber) setListeningState(state ListeningState) {
+	prevState := at.getListeningState()
 	atomic.StoreInt32((*int32)(&at.listeningState), int32(state))
-	// Log state change for debugging
-	log.Printf("Listening state changed to: %v", state)
+	
+	// Record state transition
+	select {
+	case at.stateTransitions <- StateTransition{
+		from:      prevState,
+		to:        state,
+		timestamp: time.Now(),
+	}:
+	default:
+		log.Println("Warning: state transition channel full")
+	}
+	
+	log.Printf("State transition: %v -> %v", prevState, state)
 }
 
 func (at *AudioTranscriber) getListeningState() ListeningState {
 	return ListeningState(atomic.LoadInt32((*int32)(&at.listeningState)))
 }
 
-func (at *AudioTranscriber) processResponses(responses []*speechpb.StreamingRecognizeResponse) {
-    for _, resp := range responses {
-        for _, result := range resp.Results {
-            if len(result.Alternatives) == 0 {
-                continue
-            }
+func (at *AudioTranscriber) clearAudioQueue() {
+	for len(at.audioQueue) > 0 {
+		<-at.audioQueue
+	}
+}
 
-            transcript := result.Alternatives[0].Transcript
-
-            // Check for interrupt commands in all transcripts
-            if at.containsInterruptCommand(transcript) {
-                log.Println("Interrupt command detected in transcript.")
-                at.handleVoiceInterrupt()
-                return
-            }
-
-            // If in INTERRUPT_ONLY state, ignore all other processing
-            if at.listeningState == INTERRUPT_ONLY {
-                continue
-            }
-
-            // Skip empty transcripts
-            if strings.TrimSpace(transcript) == "" {
-                continue
-            }
-
-            // Check speaking state with proper locking
-            at.isSpeakingMutex.Lock()
-            speaking := at.isSpeaking
-            at.isSpeakingMutex.Unlock()
-
-            // If speaking, skip processing
-            if speaking {
-                continue
-            }
-
-            // Process based on result type
-            if !result.IsFinal {
-                at.handleInterimResult(transcript)
-            } else {
-                at.handleFinalResult(transcript)
-            }
-        }
+// Play context audio
+func (at *AudioTranscriber) playContextAudio(index int) bool {
+    filename, exists := at.contextFileMapping[index]
+    if !exists {
+        return false
     }
-}
-
-// handleVoiceInterrupt handles voice-based interrupt commands
-func (at *AudioTranscriber) handleVoiceInterrupt() {
-	fmt.Println("\nInterrupt: Voice command detected!")
-	
-	// Stop any ongoing audio playback immediately
-	speaker.Clear()
-	
-	// Reset states before calling handleInterrupt
-	at.setSpeakingState(false)
-	at.setListeningState(FULL_LISTENING)
-	
-	at.handleInterrupt()
-}
-
-// initSpeaker initializes the speaker with a sample audio file
-func (at *AudioTranscriber) initSpeaker() error {
-	// Open a sample audio file to get the format
-	sampleFile := filepath.Join(at.contextFolder, at.contextFileMapping[0]+".mp3")
-	f, err := os.Open(sampleFile)
-	if err != nil {
-		return fmt.Errorf("error opening sample file: %v", err)
-	}
-	defer f.Close()
-
-	// Decode the sample file to get the format
-	_, format, err := mp3.Decode(f)
-	if err != nil {
-		return fmt.Errorf("error decoding sample file: %v", err)
-	}
-
-	// Initialize the speaker
-	err = speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
-	if err != nil {
-		return fmt.Errorf("error initializing speaker: %v", err)
-	}
-
-	return nil
+    
+    audioFile := filepath.Join(at.contextFolder, filename+".mp3")
+    
+    // Create a WaitGroup to ensure audio completes
+    var wg sync.WaitGroup
+    wg.Add(1)
+    
+    go func() {
+        defer wg.Done()
+        at.playAudioResponse(audioFile)
+    }()
+    
+    // Wait for audio to complete with timeout
+    done := make(chan struct{})
+    go func() {
+        wg.Wait()
+        close(done)
+    }()
+    
+    select {
+    case <-done:
+        return true
+    case <-time.After(10 * time.Second):
+        log.Println("Context audio playback timed out")
+        return false
+    }
 }
 
 // stopAudio interrupts any ongoing audio playback
@@ -1267,83 +1285,185 @@ func (at *AudioTranscriber) containsInterruptCommand(transcript string) bool {
 	return false
 }
 
-// setSpeakingState safely sets the speaking state
-func (at *AudioTranscriber) setSpeakingState(speaking bool) {
-	at.isSpeakingMutex.Lock()
-	defer at.isSpeakingMutex.Unlock()
-	at.isSpeaking = speaking
-	if speaking {
-		log.Println("State Change: isSpeaking set to TRUE")
+// setAudioPlaying safely sets the audio playing state
+func (at *AudioTranscriber) setAudioPlaying(playing bool) {
+	at.audioPlayingMutex.Lock()
+	defer at.audioPlayingMutex.Unlock()
+	at.audioPlaying = playing
+	if playing {
+		log.Println("State Change: Audio Playing set to TRUE")
 	} else {
-		log.Println("State Change: isSpeaking set to FALSE")
+		log.Println("State Change: Audio Playing set to FALSE")
 	}
 }
 
-
+// isAudioPlaying safely gets the current audio playing state
+func (at *AudioTranscriber) isAudioPlaying() bool {
+	at.audioPlayingMutex.Lock()
+	defer at.audioPlayingMutex.Unlock()
+	return at.audioPlaying
+}
 
 // handleInterimResult processes interim transcription results
 func (at *AudioTranscriber) handleInterimResult(transcript string) {
-	// Skip processing if in INTERRUPT_ONLY mode or if it's audio feedback
-	if at.getListeningState() == INTERRUPT_ONLY || at.isSpeaking {
-		return
-	}
+    // Skip processing if in INTERRUPT_ONLY mode or if playing audio
+    if at.getListeningState() == INTERRUPT_ONLY || at.isAudioPlaying() {
+        return
+    }
 
-	if transcript != at.LastTranscript && time.Since(at.lastInterimTimestamp) >= at.interimCooldown {
-		fmt.Printf(`Interim: "%s"`+"\n", transcript)
-		at.LastTranscript = transcript
-		at.lastInterimTimestamp = time.Now()
-	}
+    now := time.Now()
+    
+    // If within timeout window, append to pending transcript
+    if time.Since(at.lastTranscriptTime) < at.transcriptTimeout {
+        // Remove any final punctuation from pending transcript before combining
+        cleanPending := strings.TrimRight(at.pendingTranscript, ".!?")
+        if cleanPending != "" {
+            transcript = cleanPending + " " + transcript
+        }
+    }
+
+    at.pendingTranscript = transcript
+    at.lastTranscriptTime = now
+
+    if transcript != at.LastTranscript && time.Since(at.lastInterimTimestamp) >= at.interimCooldown {
+        fmt.Printf(`Interim: "%s"`+"\n", transcript)
+        at.LastTranscript = transcript
+        at.lastInterimTimestamp = now
+    }
 }
 
 // handleFinalResult processes final transcription results
 func (at *AudioTranscriber) handleFinalResult(transcript string) {
-	// Skip processing if in INTERRUPT_ONLY mode or if it's audio feedback
-	if at.getListeningState() == INTERRUPT_ONLY || at.isSpeaking {
+    if at.getListeningState() == INTERRUPT_ONLY || at.isAudioPlaying() {
+        return
+    }
+
+    now := time.Now()
+    
+    // If within timeout window, use pending transcript
+    if time.Since(at.lastTranscriptTime) < at.transcriptTimeout {
+        if at.pendingTranscript != "" {
+            transcript = at.pendingTranscript
+        }
+    }
+
+    at.CurrentSentence = transcript
+    fmt.Printf(`Final: "%s"`+"\n", transcript)
+
+    // Get context and completion status
+    index, isComplete := at.getContextAndCompletion(transcript)
+
+    if !at.isAudioPlaying() {
+        go func() {
+            startTime := time.Now()
+            ticker := time.NewTicker(100 * time.Millisecond)
+            defer ticker.Stop()
+
+            maxWait := 2 * time.Second
+            if isComplete {
+                maxWait = 1 * time.Second
+            }
+
+            for {
+                select {
+                case <-ticker.C:
+                    elapsed := time.Since(startTime)
+                    fmt.Printf("\rWaiting for more input: %.1f/%.1f seconds", elapsed.Seconds(), maxWait.Seconds())
+
+                    if elapsed >= maxWait {
+                        fmt.Println()
+                        // Clear pending transcript after timeout
+                        at.pendingTranscript = ""
+                        at.processCompleteSentence(at.CurrentSentence, index)
+                        return
+                    }
+
+                    if time.Since(at.lastInterimTimestamp) < elapsed {
+                        fmt.Println("\rTimer reset - new audio detected")
+                        return
+                    }
+                }
+            }
+        }()
+    }
+}
+
+// handleVoiceInterrupt handles voice-based interrupt commands
+func (at *AudioTranscriber) handleVoiceInterrupt() {
+	// Check if we're in interrupt mode and audio is playing
+	if at.getListeningState() != INTERRUPT_ONLY || !at.isAudioPlaying() {
 		return
 	}
 
-	// Process the final result
-	at.CurrentSentence = transcript
-	fmt.Printf(`Final: "%s"`+"\n", transcript)
+	fmt.Println("\nInterrupt: Voice command detected!")
+	
+	// Handle the interrupt
+	at.handleInterrupt()
+}
 
-	// Get context and completion status
-	index, isComplete := at.getContextAndCompletion(transcript)
-
-	if !at.isSpeaking {
-		// Start a timer in a separate goroutine
-		go func() {
-			startTime := time.Now()
-			ticker := time.NewTicker(100 * time.Millisecond)
-			defer ticker.Stop()
-
-			maxWait := 2 * time.Second
-			if isComplete {
-				maxWait = 500 * time.Millisecond
-			}
-
-			for {
-				select {
-				case <-ticker.C:
-					elapsed := time.Since(startTime)
-					fmt.Printf("\rWaiting for more input: %.1f/%.1f seconds", elapsed.Seconds(), maxWait.Seconds())
-
-					if elapsed >= maxWait {
-						fmt.Println()
-						if isComplete {
-							fmt.Println("Processing: Complete sentence detected with 0.5 second silence")
-						} else {
-							fmt.Println("Processing: Incomplete sentence detected with 2 seconds silence")
-						}
-						at.processCompleteSentence(at.CurrentSentence, index)
-						return
-					}
-
-					if time.Since(at.lastInterimTimestamp) < elapsed {
-						fmt.Println("\rTimer reset - new audio detected")
-						return
-					}
-				}
-			}
-		}()
+// initSpeaker initializes the speaker with a sample audio file
+func (at *AudioTranscriber) initSpeaker() error {
+	// Open a sample audio file to get the format
+	sampleFile := filepath.Join(at.contextFolder, at.contextFileMapping[0]+".mp3")
+	f, err := os.Open(sampleFile)
+	if err != nil {
+		return fmt.Errorf("error opening sample file: %v", err)
 	}
+	defer f.Close()
+
+	// Decode the sample file to get the format
+	_, format, err := mp3.Decode(f)
+	if err != nil {
+		return fmt.Errorf("error decoding sample file: %v", err)
+	}
+
+	// Initialize the speaker
+	err = speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+	if err != nil {
+		return fmt.Errorf("error initializing speaker: %v", err)
+	}
+
+	return nil
+}
+
+// Cleanup cleans up resources when the transcriber is done
+func (at *AudioTranscriber) Cleanup() {
+	at.cleanup.Once.Do(func() {
+		close(at.cleanup.done)
+		at.stopAudio()
+		at.clearAudioQueue()
+		at.resetState()
+		
+		// Clean up clients
+		if at.speechClient != nil {
+			at.speechClient.Close()
+		}
+		if at.ttsClient != nil {
+			at.ttsClient.Close()
+		}
+	})
+}
+
+func (at *AudioTranscriber) logDebugEvent(event string) {
+	at.debug.Lock()
+	defer at.debug.Unlock()
+	
+	at.debug.events = append(at.debug.events, struct {
+		timestamp time.Time
+		event     string
+	}{
+		timestamp: time.Now(),
+		event:     event,
+	})
+	
+	// Keep only last 100 events
+	if len(at.debug.events) > 100 {
+		at.debug.events = at.debug.events[1:]
+	}
+	
+	log.Printf("Debug: %s", event)
+}
+
+func (at *AudioTranscriber) logAudioStateChange(state string, playing bool) {
+	at.logDebugEvent(fmt.Sprintf("Audio State Change: %s, Playing: %v", state, playing))
 }

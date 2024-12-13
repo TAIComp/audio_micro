@@ -1,7 +1,10 @@
-Starts in FULL_LISTENING
-Switches to INTERRUPT_ONLY during processing
-Uses resetState() to properly return to FULL_LISTENING:
-On errors
-After audio completion
-When interrupted
-If no response
+rrupt_only to go to update interruptDetector for detecting interruption commands.
+
+
+What is wrong with my code. I want to get similar to this result:
+Here i have idea of real life speech to speech ai tutor. It will listen to user and provide answer with voice. Also it will have interruption with word commands and with keyboard.
+How i want to realize this.
+There will be speech to text function which will always do the speech to text and send it to diffirent states. In the beginng the listening state is full_listening and isaudioplaying is false, during this state the program willl get texts from speech to text for updating interim and final till the time when sentence is completed: based on true from openai and o.5 seconds of silient or false from openai and 2 seconds of siliten. After this the state will change to interrupt_onlly and the isaudioplaying will be true. After this time all texts from speech to text will go to interruptdetector string where the program will only care about if there is an interruption command there or not, no interim or final are being updated here. After sentence complition simultenously will be streaming token from openai and saving the streaming of them in the buffer And playing contextbased/random where the program will get index of it from openai. once the contextbased audio is finished the program will do streaming audio of the ai response which part of it is already ready in the buffer and the rest will also be added to the buffer through the time. The main goal fo the putttin contextbased audio is that so that the will not be silent while the program is doing streaming token and streaming audio.  Once the program is done streaming the state will be back to full_listening and isaudioplaying to false.
+during full_listening state and isaudioplaying false the program will send text from speech to text to  updating interim and final and checking for sentence is complete
+during interrupt_only stae and isaudioplaying true the program will send text from speech to text to interrupdetector string in order to detect interruption commands.
+when the interruption will be detected the audio will be acknowledgement audio will be played and after it the state will be full_listening and isaudioplaying will be false. So that my code will work as cycle.
