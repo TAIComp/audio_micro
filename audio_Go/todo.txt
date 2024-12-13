@@ -8,3 +8,652 @@ There will be speech to text function which will always do the speech to text an
 during full_listening state and isaudioplaying false the program will send text from speech to text to  updating interim and final and checking for sentence is complete
 during interrupt_only stae and isaudioplaying true the program will send text from speech to text to interrupdetector string in order to detect interruption commands.
 when the interruption will be detected the audio will be acknowledgement audio will be played and after it the state will be full_listening and isaudioplaying will be false. So that my code will work as cycle.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+what went wrong in my program why during streaming audio it printed listening ..... does it mean that my program has some limations or what why when i said a topic which was long my program is not working properly and streaming fully audio and then restarting however mid response it printed listening .... i mean for the response whcih are 2-3 sentence it does not happen like this however when the response is long its not working properly:
+Processing responses - State: 1, Audio Playing: true
+Interrupt Detection: This is called superposition think of it like a spinning coin while it's spinning. It's neither heads nor Tails only when it lands. Do we see the result?
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+
+Listening .... (press ` or say "shut up" to interrupt)
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Does that make?
+
+
+
+
+
+
+
+
+
+
+
+
+actual result
+
+
+
+
+manu@manu-HP-ProBook-440-G8-Notebook-PC:~/Desktop/audio_Go$ go run main.go
+
+Listening .... (press ` or say "shut up" to interrupt)
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Hello.
+Interim: "Hello."
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Hello.
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Final: Hello.
+Final: "Hello."
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: How?
+Interim: "Hello. How?"
+Timer reset - new audio detectedseconds
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: How?
+Interim: "Hello. How?"
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Final: How?
+Final: "Hello. How?"
+Waiting for more input: 1.0/1.0 seconds
+Processing: Complete sentence detected with 1 second silence
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Interrupt Detection: Are you?
+Current State: 1, Audio Playing: trueking. How can I help you today? If you have any questions or topics you
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: truew!
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+
+Listening .... (press ` or say "shut up" to interrupt)
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Hello, I'm doing great. Thanks for asking. How can I help you today? If you have any questions or topics you want to learn about just let me
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: let's,
+Interim: "let's,"
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Let's talk.
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Let's talk about.
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Let's
+Interim: "let's, Let's talk. Let's talk about."
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Let's talk
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Let's talk about.
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Let's talk about
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Let's talk about
+Interim: "let's, Let's talk. Let's talk about."
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Let's talk about
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Let's talk about some
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Let's talk about some
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Let's talk about some quantum
+Interim: "let's, Let's talk. Let's talk about. Let's talk about some Let's talk about some quantum"
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Final: Let's talk about some quantum physics.
+Final: "let's, Let's talk. Let's talk about. Let's talk about some Let's talk about some quantum"
+Waiting for more input: 2.0/2.0 seconds
+Processing: Incomplete sentence detected with 2 seconds silence
+Sure! Let's talk about quantum physics. 
+
+Current State: 1, Audio Playing: trueicles that make up
+Processing responses - State: 1, Audio Playing: true
+ everything around us, like atoms and photons. It explores how these particles behave in ways that can seem really strange and not like anything we see in our everyday lives.
+
+For example, particles can exist in multiple states at once until we measure them. This is called superposition. Think of it like a spinning coin. While it's spinning, it's neither heads nor tails—only when it lands do we see the result.
+
+Current State: 1, Audio Playing: trueart of quantum physics would you like to learn more about?
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Interrupt Detection: Sure, let's talk about quantum physics. Quantum physics, studies the tiny particles that make up everything around us.
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Interrupt Detection: It explores how these particles behave in ways that can seem really strange and not like anything we see in our everyday lives,
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Interrupt Detection: For example, particles can exist in multiple States at once until we measure them.
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+Interrupt Detection: This is called superposition think of it like a spinning coin while it's spinning. It's neither heads nor Tails only when it lands. Do we see the result?
+Current State: 1, Audio Playing: true
+Processing responses - State: 1, Audio Playing: true
+
+Listening .... (press ` or say "shut up" to interrupt)
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: Does that make?
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What?
+Interim: "Does that make? What?"
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific?
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of?
+Interim: "Does that make? What? What specific? What specific part of?"
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of
+Interim: "Does that make? What? What specific? What specific part of?"
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of
+Interim: "Does that make? What? What specific? What specific part of?"
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of quantum
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of quantum
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of quantum
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of quantum physics?
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of quantum physics?
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of quantum physics?
+Interim: "Does that make? What? What specific? What specific part of? What specific part of quantum What specific part of quantum physics?"
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of quantum physics? Would
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of quantum physics? Would you
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of quantum physics? Would you like
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of quantum physics? Would you like to
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Interim: What specific part of quantum physics? Would you like to learn
+Current State: 0, Audio Playing: false
+Processing responses - State: 0, Audio Playing: false
+Full Listening - Final: What specific part of quantum physics? Would you like to learn more about
+Final: "Does that make? What? What specific? What specific part of? What specific part of quantum What specific part of quantum physics? What specific part of quantum physics? Would What specific part of quantum physics? Would you What specific part of quantum physics? Would you like What specific part of quantum physics? Would you like to What specific part of quantum physics? Would you like to learn"
+Waiting for more input: 2.0/2.0 seconds

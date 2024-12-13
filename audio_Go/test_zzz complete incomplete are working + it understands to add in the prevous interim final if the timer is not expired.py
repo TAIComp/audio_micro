@@ -1005,7 +1005,7 @@ func (at *AudioTranscriber) streamAudioResponse(audioData []byte) error {
     case <-done:
         log.Println("AI response playback complete")
         return nil
-    case <-time.After(30 * time.Second):
+    case <-time.After(60 * time.Second):
         return fmt.Errorf("audio playback timed out")
     }
 }
