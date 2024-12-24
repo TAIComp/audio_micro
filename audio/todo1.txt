@@ -1,0 +1,26 @@
+Please provide the final version of the codes please: See i had my program in test.go file and it was working fine. however now i wanted to devide it into several parts could you please help me provide the final version of the correct code please.
+
+
+Please keep in mind that mian.go is main architecture which runs all other files. Here i have  devide this code into several parts:
+main.go: main architecture file which will be runed and it will run other files in order to get Tutor AI with speech to speech conversation and interruption functunalities which will immitate real life speech to speech with tutor. The main.go works as cycle, listen to user answer and agian listen and answer. 
+types.go: here there will be shared types and constants to all other go files.
+speech_to_text.go: will
+sentence_iscomplete.go: speech to text will be used to update interim/final and will be sent to gpt for determing if the sentence is completed or no and also index for playing contextbased audio. when answer form gpt of sentence being finished will be true and waiting time of 1 second finished or sentence being finsihed will be false and waiting time of 2 second finishes, the program should send final to the another gpt model for getting answer streaming answer from gpt, change the state from full_listening to interrupt_only and  run main funciton of audio_context.go.
+audio_context.go: after the sentence_iscomplete will be done and isComplete is true the audio_context will play the contextbased audio.
+text_to_speech.go: will get streaming text of ai response and perform streaming text to speech. 
+interruption.go:  file which handles interruption commands and keyboard.
+cleanup.go: cleanup file which will do cleanup after streaming audio being finished or when the interruption methods is being detected: the state from interrupt_only will be changed to full_listening, variables be reseted/cleandedup so that program to work as cycle.
+
+
+
+So basically the program that i want should act like this:
+
+The goal is to have Tutor AI speech to speech conversation. There will be speech to text file which will always do the speech to text and send it either for updating interim/final for getting input of user during full_listening state or uses speech to text for detecting interruption commands/keyboard during interrupt_only state. For this I have 2 states: full_listening state and interruption_only state. 
+Program starts with full_listening state and during this part the text from speech to text goes to the updating interim/final and finals will be sent to gpt for understanding if the sentence is completed: true/false and index for playing contexbased audio. When the gpt answer for sentence being completed is true and waiting time passes 1second or sentence being completed is false and waiting time passes 2 second the program should make isComplete true and send the last final for generating answer to gpt. Please keep in mind that isComplete should be true only if the waiting timing is fully passed for example i mean if user is speaking said Hello how are you and gpt said that sentence is completed and waiting timf of 1 second started and went till 0.5 and user said doing the program should updated final to hello how are you doing? and check for complitence of the sentence form gpt if it is true start waiting time from 0 out of 1 and only when the waiting time is finished which means that 1 second passed only the the isComplete is true and final be send to gpt. the same goes to when the gpt is incomplete the waiting time of 2 second should be fully finished only after when the waiting time is finished then the isComplete should get true and the final text be send to gpt for getting answer. After isComplete being true the program should change state from full_listening to interrupt_only. Which means that during state being interrupt_only the text from speech to text will be used only for detecting interrupt commands. 
+
+After isComplete being true and the final sending to gpt for generating in order to reduce waiting time of user for gpt streaming answer text and doing steaming audio, before this the program should play the contextbased/randomd auido and simultanously do the streaming text of gpt and stroring the streaming audio in the buffer. when the contextbased audio finished it shoud run streaming audio of the stream and finish it. 
+Context audio being played and simultanously the streaming text and audio being done.
+
+After streaming audio is done or the interruption being detected either interruption command or interruption with keyboard the program should restart and work as cycle. I mean restart variables and change state from interrupt_only to full_listening. 
+
+
