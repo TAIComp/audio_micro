@@ -14,62 +14,50 @@ const (
 
 // handleInterimResult processes interim transcription results
 func (at *AudioTranscriber) handleInterimResult(transcript string) {
-	if at.getListeningState() == INTERRUPT_ONLY {
-		if at.containsInterruptCommand(transcript) {
-			at.handleVoiceInterrupt()
-		}
-		return
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	
+	// Only update interim result in FULL_LISTENING state
+	if at.listeningState == FULL_LISTENING && !at.audioPlaying {
+		cleanTranscript := strings.TrimSpace(transcript)
+		fmt.Printf("Full Listening - Interim: %s\n", cleanTranscript)
+		at.InterimResult = cleanTranscript
+		at.lastInterimTimestamp = time.Now()
 	}
-
-	at.sentenceState.Lock()
-	defer at.sentenceState.Unlock()
-
-	// Clean and normalize the transcript
-	cleanTranscript := strings.TrimSpace(transcript)
-	fmt.Printf("Full Listening - Interim: %s\n", cleanTranscript)
-	fmt.Printf("Interim: %s\n", cleanTranscript)
-	at.InterimResult = cleanTranscript
-
-	// Update last interim timestamp
-	at.lastInterimTimestamp = time.Now()
 }
 
 // handleFinalResult processes final transcription results
 func (at *AudioTranscriber) handleFinalResult(transcript string) {
-	if at.getListeningState() == INTERRUPT_ONLY {
-		if at.containsInterruptCommand(transcript) {
-			at.handleVoiceInterrupt()
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	
+	// Only process final results in FULL_LISTENING state
+	if at.listeningState == FULL_LISTENING && !at.audioPlaying {
+		fmt.Printf("Full Listening - Final: %s\n", transcript)
+		at.FinalResult = transcript
+
+		// Get sentence completion status and context index
+		contextIndex, isComplete := at.getContextAndCompletion(transcript)
+
+		// Set waiting time based on completion status
+		waitTime := INCOMPLETE_WAIT
+		if isComplete {
+			waitTime = COMPLETE_WAIT
+			fmt.Println("Processing: Complete sentence detected")
+		} else {
+			fmt.Println("Processing: Incomplete sentence detected")
 		}
-		return
-	}
 
-	at.sentenceState.Lock()
-	defer at.sentenceState.Unlock()
-
-	fmt.Printf("Full Listening - Final: %s\n", transcript)
-	fmt.Printf("Final: %s\n", transcript)
-	at.FinalResult = transcript
-
-	// Get sentence completion status and context index
-	contextIndex, isComplete := at.getContextAndCompletion(transcript)
-
-	// Set waiting time based on completion status
-	waitTime := INCOMPLETE_WAIT
-	if isComplete {
-		waitTime = COMPLETE_WAIT
-		fmt.Println("Processing: Complete sentence detected")
-	} else {
-		fmt.Println("Processing: Incomplete sentence detected")
-	}
-
-	// Start or reset timer
-	if !at.sentenceState.isTimerActive {
-		at.sentenceState.isTimerActive = true
-		at.sentenceState.lastUpdateTime = time.Now()
-		go at.processSentenceWithTimer(transcript, contextIndex, waitTime)
-	} else {
-		// Reset timer
-		at.sentenceState.lastUpdateTime = time.Now()
+		// Start or reset timer
+		if !at.sentenceState.isTimerActive {
+			at.sentenceState.isTimerActive = true
+			
+			// Move transcript clearing to processSentenceWithTimer
+			go at.processSentenceWithTimer(transcript, contextIndex, waitTime)
+		} else {
+			// Reset timer
+			at.sentenceState.lastUpdateTime = time.Now()
+		}
 	}
 }
 
@@ -100,6 +88,9 @@ func (at *AudioTranscriber) processSentenceWithTimer(text string, contextIndex i
 				at.sentenceState.timerExpired = true
 				at.sentenceState.Unlock()
 
+				// Clear transcripts after timer expires but before processing
+				at.aggressiveClearTranscripts()
+
 				// Process the completed sentence
 				at.processCompletedSentence(text, contextIndex)
 				return
@@ -123,6 +114,11 @@ func (at *AudioTranscriber) processCompletedSentence(text string, contextIndex i
 	at.setListeningState(INTERRUPT_ONLY)
 	fmt.Printf("Current State: %d, Audio Playing: %v\n", at.getListeningState(), at.isAudioPlaying())
 
+	// Aggressive clearing before processing
+	at.clearTranscripts()
+	time.Sleep(100 * time.Millisecond)
+	at.clearTranscripts()
+
 	// Play context audio and generate GPT response simultaneously
 	responseChan := make(chan string)
 	go func() {
@@ -138,9 +134,10 @@ func (at *AudioTranscriber) processCompletedSentence(text string, contextIndex i
 	response := <-responseChan
 	fmt.Println(response)
 
-	// Clear interim and final transcripts
-	at.InterimResult = ""
-	at.FinalResult = ""
+	// Clear transcripts again before playing audio
+	at.clearTranscripts()
+	time.Sleep(100 * time.Millisecond)
+	at.clearTranscripts()
 
 	// Convert response to speech and play it
 	audioData, err := at.textToSpeech(response)
@@ -153,9 +150,12 @@ func (at *AudioTranscriber) processCompletedSentence(text string, contextIndex i
 		log.Printf("Error streaming audio response: %v", err)
 	}
 
-	// Reset state and prepare for next input
+	// Reset state and prepare for next input with aggressive clearing
 	at.resetState()
+	time.Sleep(200 * time.Millisecond)
+	at.clearTranscripts()
 	at.setListeningState(FULL_LISTENING)
+	
 	fmt.Printf("\nListening .... (press ` or say \"shut up\" to interrupt)\n")
 	fmt.Printf("Current State: %d, Audio Playing: %v\n", at.getListeningState(), at.isAudioPlaying())
 }
@@ -191,4 +191,19 @@ func (at *AudioTranscriber) clearAudioQueue() {
 	for len(at.AudioQueue) > 0 {
 		<-at.AudioQueue
 	}
+}
+
+// Add this helper function to AudioTranscriber
+func (at *AudioTranscriber) clearTranscripts() {
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	
+	at.InterimResult = ""
+	at.FinalResult = ""
+	at.InterruptTranscript = ""
+	at.LastTranscript = ""
+	at.CurrentSentence = ""
+	
+	// Add a small delay to ensure buffers are cleared
+	time.Sleep(100 * time.Millisecond)
 }

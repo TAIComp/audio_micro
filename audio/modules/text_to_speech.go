@@ -212,10 +212,18 @@ func (at *AudioTranscriber) streamAudioResponse(audioData []byte) error {
 	defer func() {
 		at.setAudioPlaying(false)
 		at.setListeningState(FULL_LISTENING)
+		
+		// Aggressive clearing after audio playback
+		at.aggressiveClearTranscripts()
+		
+		// Add debug logging
+		log.Println("Audio playback completed, state reset to FULL_LISTENING")
+		
+		fmt.Printf("\nListening .... (press ` or say \"shut up\" to interrupt)\n")
 		fmt.Printf("Current State: %d, Audio Playing: %v\n", at.getListeningState(), at.isAudioPlaying())
 	}()
 	
-	log.Printf("Streaming audio response (length: %d bytes)", len(audioData))
+	log.Printf("Starting audio response playback (length: %d bytes)", len(audioData))
 	fmt.Printf("Processing responses - State: %d, Audio Playing: %v\n", at.getListeningState(), at.isAudioPlaying())
 	
 	reader := bytes.NewReader(audioData)
@@ -242,9 +250,46 @@ func (at *AudioTranscriber) streamAudioResponse(audioData []byte) error {
 	// Wait for completion with timeout
 	select {
 	case <-done:
-		log.Println("AI response playback complete")
+		log.Println("AI response playback complete, clearing transcripts")
+		// Additional clearing after playback completes
+		at.aggressiveClearTranscripts()
+		
+		// Add extra newlines for better visibility
+		fmt.Printf("\n\n")
 		return nil
 	case <-time.After(60 * time.Second):
 		return fmt.Errorf("audio playback timed out")
 	}
+}
+
+// aggressiveClearTranscripts clears all transcript variables
+func (at *AudioTranscriber) aggressiveClearTranscripts() {
+	log.Println("Starting aggressive transcript clearing")
+	
+	// Multiple clearing passes with delays
+	for i := 0; i < 2; i++ {
+		at.mu.Lock()
+		at.InterruptTranscript = ""
+		at.InterimResult = ""
+		at.FinalResult = ""
+		at.LastTranscript = ""
+		at.CurrentSentence = ""
+		at.mu.Unlock()
+		
+		log.Printf("Clearing pass %d/3 completed", i+1)
+		// Add delay between passes
+		time.Sleep(100 * time.Millisecond)
+	}
+	
+	// Reset processing flags
+	at.audioStateMutex.Lock()
+	at.isProcessingAudio = false
+	at.audioStateMutex.Unlock()
+	
+	// Clear audio queue
+	at.clearAudioQueue()
+	
+	log.Println("Transcript clearing completed")
+	// Final delay to ensure everything is cleared
+	time.Sleep(100 * time.Millisecond)
 }

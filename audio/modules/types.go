@@ -162,6 +162,10 @@ type AudioTranscriber struct {
 	stopGeneration     bool
 	pendingResponse    string
 	muteThreshold     float64
+
+	// State tracking
+	lastState        ListeningState
+	lastAudioPlaying bool
 }
 
 // NewAudioTranscriber creates and initializes a new AudioTranscriber instance
@@ -197,10 +201,14 @@ func NewAudioTranscriber(ctx context.Context, speechClient *speech.Client, ttsCl
 		},
 		listeningState: FULL_LISTENING,
 		interruptCommands: map[string]struct{}{
-			"shut up":          {},
-			"stop please":      {},
-			"shut up please":   {},
-			"please shut up":   {},
+			"shut up":        {},
+			"shutup":         {},
+			"stop please":    {},
+			"stopplease":     {},
+			"please stop":    {},
+			"pleasestop":     {},
+			"shut up please": {},
+			"please shut up": {},
 		},
 		lastInterimTimestamp: time.Now(),
 		interimCooldown:      500 * time.Millisecond,

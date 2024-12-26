@@ -43,6 +43,7 @@ func (at *AudioTranscriber) HandleInterrupts() {
 // handleKeyboardInterrupt handles the backtick key interrupt
 func (at *AudioTranscriber) handleKeyboardInterrupt() {
 	fmt.Println("\nInterrupt: Backtick keyboard detected!")
+	at.aggressiveClearTranscripts()
 	at.handleInterrupt()
 }
 
@@ -54,25 +55,38 @@ func (at *AudioTranscriber) handleVoiceInterrupt() {
 
 // handleInterrupt handles both keyboard and voice interrupts
 func (at *AudioTranscriber) handleInterrupt() {
+	// Stop any ongoing audio
 	speaker.Clear()
-	at.setListeningState(INTERRUPT_ONLY)
-	at.clearAudioQueue()
-	at.resetState()
-
-	at.audioStateMutex.Lock()
-	at.isProcessingAudio = false
-	at.audioStateMutex.Unlock()
 	
+	// Set state to interrupt only
+	at.setListeningState(INTERRUPT_ONLY)
+	
+	// Clear audio queue and reset state
+	at.clearAudioQueue()
+	
+	// First round of aggressive transcript clearing
+	at.aggressiveClearTranscripts()
+	
+	// Play acknowledgment and reset state
 	at.playAcknowledgment()
+	
+	// Second round of aggressive clearing after acknowledgment
+	at.aggressiveClearTranscripts()
+	
 	at.setListeningState(FULL_LISTENING)
 	at.setAudioPlaying(false)
 
+	// Reset audio stream if it exists
 	if at.audioStream != nil {
 		at.audioStream.Stop()
 		at.audioStream.Start()
 	}
 
-	fmt.Println("\nListening .... (press ` or say \"shut up\" to interrupt)")
+	// Final round of aggressive clearing
+	at.aggressiveClearTranscripts()
+	
+	// Add extra newlines for better visibility
+	fmt.Printf("\nListening .... (press ` or say \"shut up\" to interrupt)\n")
 }
 
 // containsInterruptCommand checks if the transcript contains an interrupt command
@@ -80,24 +94,34 @@ func (at *AudioTranscriber) containsInterruptCommand(transcript string) bool {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
+	log.Printf("DEBUG: Raw interrupt check transcript: '%s'", transcript)
+
+	// Clean the text more aggressively
 	re := regexp.MustCompile(`[^\w\s]`)
 	cleanedText := re.ReplaceAllString(transcript, "")
-	normalizedText := strings.ToLower(strings.TrimSpace(cleanedText))
+	// Remove extra spaces (including leading/trailing) and convert to lowercase
+	normalizedText := strings.Join(strings.Fields(strings.ToLower(cleanedText)), " ")
 
-	log.Printf("Normalized transcript: \"%s\"\n", normalizedText)
+	log.Printf("DEBUG: Normalized interrupt check transcript: '%s'", normalizedText)
 
+	// Check exact matches first
 	if _, exists := at.interruptCommands[normalizedText]; exists {
-		fmt.Printf("Interrupt command used: \"%s\"\n", normalizedText)
+		log.Printf("DEBUG: Found exact interrupt command match: '%s'", normalizedText)
 		return true
 	}
 
-	for cmd := range at.interruptCommands {
-		if strings.Contains(normalizedText, cmd) {
-			fmt.Printf("Interrupt command used: \"%s\"\n", cmd)
-			return true
+	// Check each word in the transcript for interrupt commands
+	words := strings.Fields(normalizedText)
+	for _, word := range words {
+		for cmd := range at.interruptCommands {
+			if strings.Contains(cmd, word) || strings.Contains(word, cmd) {
+				log.Printf("DEBUG: Found partial interrupt command match: '%s' in word '%s'", cmd, word)
+				return true
+			}
 		}
 	}
 
+	log.Printf("DEBUG: No interrupt command found in: '%s'", normalizedText)
 	return false
 }
 
@@ -106,9 +130,13 @@ func (at *AudioTranscriber) playAcknowledgment() {
 	at.setAudioPlaying(true)
 	at.playAudioResponse(at.interruptAudioPath)
 	at.setAudioPlaying(false)
+	// Clear transcripts after acknowledgment
+	at.aggressiveClearTranscripts()
 }
 
 // stopAudio interrupts any ongoing audio playback
 func (at *AudioTranscriber) stopAudio() {
 	speaker.Clear()
+	// Clear transcripts after stopping audio
+	at.aggressiveClearTranscripts()
 }

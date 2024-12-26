@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/speech/apiv1/speechpb"
@@ -145,7 +146,21 @@ func (at *AudioTranscriber) ProcessAudioStream(ctx context.Context) (err error) 
 			}
 		}()
 
+		var lastState ListeningState = FULL_LISTENING
+		var lastAudioPlaying bool = false
 		log.Println("Starting response handling goroutine...")
+		
+		clearTranscripts := func() {
+			at.mu.Lock()
+			defer at.mu.Unlock()
+			at.InterimResult = ""
+			at.FinalResult = ""
+			at.InterruptTranscript = ""
+			at.LastTranscript = ""
+			at.CurrentSentence = ""
+			time.Sleep(100 * time.Millisecond)
+		}
+		
 		for {
 			select {
 			case <-ctx.Done():
@@ -164,11 +179,75 @@ func (at *AudioTranscriber) ProcessAudioStream(ctx context.Context) (err error) 
 					return
 				}
 
+				currentState := at.getListeningState()
+				currentAudioPlaying := at.isAudioPlaying()
+				
+				// Clear transcripts in these scenarios:
+				// 1. State changes
+				// 2. Audio playback status changes
+				// 3. After audio finishes playing
+				if currentState != lastState || currentAudioPlaying != lastAudioPlaying {
+					clearTranscripts()
+					lastState = currentState
+					lastAudioPlaying = currentAudioPlaying
+					continue
+				}
+
+				// Additional clearing when transitioning from audio playback to listening
+				if !currentAudioPlaying && lastAudioPlaying {
+					clearTranscripts()
+					lastAudioPlaying = currentAudioPlaying
+					continue
+				}
+
 				for _, result := range resp.Results {
-					if result.IsFinal {
-						at.handleFinalResult(result.Alternatives[0].Transcript)
-					} else {
-						at.handleInterimResult(result.Alternatives[0].Transcript)
+					if len(result.Alternatives) == 0 {
+						continue
+					}
+					
+					transcript := result.Alternatives[0].Transcript
+					
+					// Add debug logging for state and transcript
+					log.Printf("DEBUG: Processing transcript: '%s'", transcript)
+					log.Printf("DEBUG: Current state: %d, Audio playing: %v", currentState, currentAudioPlaying)
+					
+					if currentState == INTERRUPT_ONLY {
+						at.InterruptTranscript = transcript
+						fmt.Printf("Interrupt Check: %s\n", transcript)
+						
+						// Add debug logging for interrupt check
+						log.Printf("DEBUG: Checking for interrupt command in: '%s'", transcript)
+						if at.containsInterruptCommand(transcript) {
+							log.Printf("DEBUG: Interrupt command detected in: '%s'", transcript)
+							
+							// Ensure we're in the correct state
+							currentState := at.getListeningState()
+							isPlaying := at.isAudioPlaying()
+							log.Printf("DEBUG: Current state before interrupt: State=%d, AudioPlaying=%v", currentState, isPlaying)
+							
+							// Call interrupt handler
+							log.Println("DEBUG: Calling handleVoiceInterrupt...")
+							at.handleVoiceInterrupt()
+							log.Println("DEBUG: handleVoiceInterrupt completed")
+							
+							// Force cleanup and state reset
+							at.setListeningState(FULL_LISTENING)
+							at.setAudioPlaying(false)
+							at.aggressiveClearTranscripts()
+							
+							fmt.Printf("\nListening .... (press ` or say \"shut up\" to interrupt)\n")
+							fmt.Printf("Current State: %d, Audio Playing: %v\n", 
+								at.getListeningState(), at.isAudioPlaying())
+							
+							return // Exit processing after interrupt
+						}
+						log.Printf("DEBUG: No interrupt command found in: '%s'", transcript)
+					} else if !currentAudioPlaying {
+						if result.IsFinal {
+							at.handleFinalResult(transcript)
+						} else {
+							at.handleInterimResult(transcript)
+						}
 					}
 				}
 			}
@@ -290,6 +369,83 @@ func (at *AudioTranscriber) monitorStateChanges(ctx context.Context,
 					return
 				}
 				lastState = currentState
+			}
+		}
+	}
+}
+
+func (at *AudioTranscriber) processResponses(responses []*speechpb.StreamingRecognizeResponse) {
+	clearTranscripts := func() {
+		at.mu.Lock()
+		defer at.mu.Unlock()
+		at.InterruptTranscript = ""
+		at.InterimResult = ""
+		at.FinalResult = ""
+		at.LastTranscript = ""
+		at.CurrentSentence = ""
+		// Add a longer delay to ensure buffers are cleared
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	for _, response := range responses {
+		if len(response.Results) == 0 {
+			continue
+		}
+
+		at.mu.Lock()
+		currentState := at.getListeningState()
+		isPlaying := at.isAudioPlaying()
+		stateChanged := currentState != at.lastState
+		playingChanged := isPlaying != at.lastAudioPlaying
+		at.mu.Unlock()
+
+		// Always clear transcripts when state or playing status changes
+		if stateChanged || playingChanged {
+			clearTranscripts()
+			at.lastState = currentState
+			at.lastAudioPlaying = isPlaying
+			// Skip this response to ensure clean state
+			continue
+		}
+
+		// Additional clearing when transitioning from audio playback to listening
+		if !isPlaying && at.lastAudioPlaying {
+			clearTranscripts()
+			at.lastAudioPlaying = isPlaying
+			continue
+		}
+
+		result := response.Results[0]
+		transcript := strings.TrimSpace(result.Alternatives[0].Transcript)
+		
+		if transcript == "" {
+			continue
+		}
+
+		// Handle different states
+		switch currentState {
+		case INTERRUPT_ONLY:
+			if isPlaying {
+				// Clear before processing new interrupt check
+				clearTranscripts()
+				at.InterruptTranscript = transcript
+				fmt.Printf("Interrupt Check: %s\n", transcript)
+				if at.containsInterruptCommand(transcript) {
+					at.handleVoiceInterrupt()
+				}
+			}
+		case FULL_LISTENING:
+			if !isPlaying {
+				if result.IsFinal {
+					fmt.Printf("Full Listening - Final: %s\n", transcript)
+					at.handleFinalResult(transcript)
+				} else {
+					fmt.Printf("Full Listening - Interim: %s\n", transcript)
+					at.handleInterimResult(transcript)
+				}
+			} else {
+				// Clear transcripts when audio is playing in FULL_LISTENING
+				clearTranscripts()
 			}
 		}
 	}
