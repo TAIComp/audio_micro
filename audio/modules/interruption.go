@@ -110,18 +110,6 @@ func (at *AudioTranscriber) containsInterruptCommand(transcript string) bool {
 		return true
 	}
 
-	// Check each word in the transcript for interrupt commands
-	words := strings.Fields(normalizedText)
-	for _, word := range words {
-		for cmd := range at.interruptCommands {
-			if strings.Contains(cmd, word) || strings.Contains(word, cmd) {
-				log.Printf("DEBUG: Found partial interrupt command match: '%s' in word '%s'", cmd, word)
-				return true
-			}
-		}
-	}
-
-	log.Printf("DEBUG: No interrupt command found in: '%s'", normalizedText)
 	return false
 }
 
