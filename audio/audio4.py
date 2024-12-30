@@ -385,9 +385,6 @@ class AudioTranscriber:
         except Exception as e:
             print(f"Audio playback error: {e}")
         finally:
-            # Aggressive cleanup before resetting states
-            self.aggressive_cleanup()
-            
             # Set the last speaking timestamp
             self._last_speaking_time = time.time()
             
@@ -401,11 +398,19 @@ class AudioTranscriber:
             self.is_processing = False
             self.pending_response = None
             
-            # Second aggressive cleanup
-            self.aggressive_cleanup()
+            # Clear any remaining audio in the queue
+            try:
+                while True:
+                    self.audio_queue.get_nowait()
+            except queue.Empty:
+                pass
             
-            # Final aggressive cleanup before listening message
-            self.aggressive_cleanup()
+            # Reset transcription-related variables
+            self.current_sentence = ""
+            self.last_transcript = ""
+            self.last_final_transcript = ""
+            self.last_sentence_complete = False
+            
             print("\nListening... (Press ` to interrupt)")
 
     def check_silence(self):
@@ -511,29 +516,7 @@ class AudioTranscriber:
                 if pygame.mixer.music.get_busy():
                     pygame.mixer.music.stop()
                     pygame.mixer.music.unload()
-                    
-                # Aggressive cleanup before acknowledgment
-                self.aggressive_cleanup()
-                
-                # Clear audio queue before playing acknowledgment
-                while not self.audio_queue.empty():
-                    try:
-                        self.audio_queue.get_nowait()
-                    except queue.Empty:
-                        break
-                    
-                self.play_acknowledgment()
-                
-                # Aggressive cleanup after acknowledgment
-                self.aggressive_cleanup()
-                
-                # Add small delay and clear queue again after acknowledgment
-                time.sleep(0.3)
-                while not self.audio_queue.empty():
-                    try:
-                        self.audio_queue.get_nowait()
-                    except queue.Empty:
-                        break
+                    self.play_acknowledgment()
                 
                 # Signal to stop AI response generation
                 self.stop_generation = True
@@ -545,11 +528,16 @@ class AudioTranscriber:
                 self.pending_response = None
                 self.listening_state = ListeningState.FULL_LISTENING
                 
+                # Clear audio queue
+                while not self.audio_queue.empty():
+                    try:
+                        self.audio_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                
                 self.reset_state()
                 self.last_interrupt_time = current_time
                 
-                # Final aggressive cleanup before listening message
-                self.aggressive_cleanup()
                 print("\nListening... (Press ` to interrupt)")
                 
         except Exception as e:
@@ -634,8 +622,8 @@ class AudioTranscriber:
                     silence_duration = (datetime.now() - self.last_speech_time).total_seconds()
                     
                     should_process = (
-                        (is_complete and silence_duration >= 0.5) or
-                        (not is_complete and silence_duration >= 1.0)
+                        (is_complete and silence_duration >= 1.0) or
+                        (not is_complete and silence_duration >= 2.0)
                     )
                     
                     if should_process and not self.is_processing:
@@ -686,11 +674,6 @@ class AudioTranscriber:
 
     def process_complete_sentence(self, sentence):
         try:
-            # Add this at the beginning
-            if self.stop_generation:
-                self.reset_state()
-                return
-
             # Use the existing temp directory
             temp_dir = Path("temp")
             temp_dir.mkdir(exist_ok=True)
@@ -780,13 +763,8 @@ class AudioTranscriber:
                 current_sentence = ""
                 chunk_counter = 0
                 
-                # Add error checking for OpenAI response
-                response_received = False
+                # Generate and process response chunks
                 for text_chunk in self.get_ai_response(sentence):
-                    if text_chunk is None:
-                        print("\nError: No response received from AI")
-                        break
-                    response_received = True
                     if self.stop_generation:
                         break
                     
@@ -876,33 +854,22 @@ class AudioTranscriber:
             except Exception as e:
                 print(f"Error cleaning up session directory: {e}")
             
-            # Add this check
-            if not response_received:
-                print("\nNo valid response received, resetting state")
-                self.reset_state()
-                return
-
         except Exception as e:
             print(f"Error processing sentence: {e}")
         finally:
-            # Aggressive cleanup before state reset
-            self.aggressive_cleanup()
-            
-            # Ensure states are always reset
+            # Reset all states after everything is complete
             self.is_speaking = False
             self.is_processing = False
             self.stop_generation = False
             self.listening_state = ListeningState.FULL_LISTENING
             
-            # Force clear the audio queue
-            while not self.audio_queue.empty():
-                try:
-                    self.audio_queue.get_nowait()
-                except queue.Empty:
-                    break
-            
-            # Second aggressive cleanup
-            self.aggressive_cleanup()
+            # Reset transcripts
+            self.current_sentence = ""
+            self.last_transcript = ""
+            self.last_final_transcript = ""
+            self.last_sentence_complete = False
+            self.last_interim_timestamp = time.time()
+            self.last_speech_time = datetime.now()
             
             # Update activity timestamp
             self.update_activity()
@@ -915,8 +882,6 @@ class AudioTranscriber:
             except:
                 pass
             
-            # Final aggressive cleanup before listening message
-            self.aggressive_cleanup()
             print("\nListening... (Press ` to interrupt)")
 
     def generate_response(self, sentence):
@@ -1103,23 +1068,6 @@ class AudioTranscriber:
         except Exception as e:
             print(f"Error reinitializing audio system: {e}")
 
-    def aggressive_cleanup(self):
-        """Perform aggressive cleanup of all transcript-related variables."""
-        self.current_sentence = ""
-        self.last_transcript = ""
-        self.last_final_transcript = ""
-        self.last_sentence_complete = False
-        self.last_interim_timestamp = time.time()
-        self.current_interrupt_buffer = ""
-        self.last_interrupt_buffer_update = time.time()
-        
-        # Clear audio queue
-        while not self.audio_queue.empty():
-            try:
-                self.audio_queue.get_nowait()
-            except queue.Empty:
-                break
-
 def main():
     try:
         transcriber = AudioTranscriber()
@@ -1133,6 +1081,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
 
 
 
